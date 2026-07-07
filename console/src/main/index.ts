@@ -859,8 +859,9 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     timedOut = true
     schedKill?.()
   }, SCHED_TIMEOUT_MS)
+  let res: RunResult
   try {
-    await runTool({
+    res = await runTool({
       tool: sched,
       values: { ...plan.values, out: outPath },
       runtime: currentRuntime(),
@@ -886,7 +887,19 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
   try {
     lines = readFileSync(outPath, 'utf8').split('\n').filter((l) => l.trim())
   } catch {
-    throw new Error('scheduler produced no worklist (see the live viewer for its output)')
+    // No worklist file -> the scheduler crashed/exited early. Surface the REAL cause (on a fresh
+    // machine this is almost always a setup problem) with a targeted hint, not a generic message.
+    const out = (res.output || '').trim()
+    const tail = out ? out.slice(-800) : '(the scheduler produced no output at all)'
+    let hint: string
+    if (/ModuleNotFoundError|No module named|ImportError/i.test(out))
+      hint = 'Python packages are missing. In the repo folder run:  pip install -r requirements.txt  (needs capstone, ndspy, pyelftools).'
+    else if (/extracted|FileNotFoundError|No such file|\.bin/i.test(out))
+      hint = 'The ROM does not look extracted. Run the repo setup (tools/unpack.py on your own legally-dumped ROM) to create the extracted/ folder coddog reads.'
+    else if (res.status === 'error' && !out)
+      hint = 'Could not run Python at all — check that `python` is installed and on PATH (the repo\'s runtime uses `python`).'
+    else hint = 'The scheduler ran but wrote nothing. Check the output below and that the repo is fully set up (deps + extracted ROM).'
+    throw new Error(`Batch scheduler (${sched.id}) produced no worklist — exit ${res.exitCode ?? '?'}.\n\n${hint}\n\n--- scheduler output ---\n${tail}`)
   }
   const items: BatchItem[] = []
   for (const line of lines) {
