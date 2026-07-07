@@ -136,7 +136,13 @@ async function runAutoPush(reason: string): Promise<void> {
     await commitMatchedWork(state.repoPath, `tangos: matched work (${reason})`)
     const remoteBranch = `tangos/matches-${SESSION_TAG}`
     const pushed = await pushToBranch(state.repoPath, remoteBranch, slug, token)
-    if (!pushed.ok) return set({ state: 'error', message: `push failed: ${pushed.err.slice(-200)}` })
+    if (!pushed.ok) {
+      const denied = /denied|403|permission|not authorized|authentication|read-only/i.test(pushed.err)
+      const hint = denied
+        ? ' — your GitHub token is read-only; sign out and back into GitHub in Settings to grant push access.'
+        : ''
+      return set({ state: 'error', message: `push failed: ${pushed.err.slice(-200)}${hint}` })
+    }
     const base = await defaultBranch(state.repoPath)
     const pr = await ensurePullRequest({
       owner: slug.owner,

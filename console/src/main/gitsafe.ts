@@ -130,7 +130,10 @@ export async function defaultBranch(repo: string): Promise<string> {
 }
 
 /** Push the current branch to origin/<remoteBranch> using a token-authenticated URL (the token
- *  is never persisted to git config). force-with-lease keeps it safe on a session-owned branch. */
+ *  is never persisted to git config). The branch is session-owned so a plain push suffices:
+ *  it creates the branch on the first push and fast-forwards it on later ones. (--force-with-lease
+ *  is unusable here — there's no remote-tracking ref for an ad-hoc URL push, so it rejects the
+ *  very first create.) On a non-ff (rare), fall back to a force push of the session branch. */
 export async function pushToBranch(
   repo: string,
   remoteBranch: string,
@@ -138,7 +141,11 @@ export async function pushToBranch(
   token: string
 ): Promise<{ ok: boolean; err: string }> {
   const url = `https://x-access-token:${token}@github.com/${slug.owner}/${slug.repo}.git`
-  const r = await git(repo, ['push', '--force-with-lease', url, `HEAD:refs/heads/${remoteBranch}`])
+  const spec = `HEAD:refs/heads/${remoteBranch}`
+  let r = await git(repo, ['push', url, spec])
+  if (r.code !== 0 && /\bnon-fast-forward\b|\brejected\b/i.test(r.err || r.out)) {
+    r = await git(repo, ['push', '--force', url, spec]) // session-owned branch: safe to force
+  }
   return { ok: r.code === 0, err: (r.err || r.out).trim() }
 }
 

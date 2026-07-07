@@ -35,7 +35,9 @@ export async function startDeviceFlow(clientId?: string): Promise<DeviceCode> {
   const r = await fetch('https://github.com/login/device/code', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: cid, scope: 'read:user' })
+    // public_repo = push access to public repos (needed for auto-push / opening PRs); read:user
+    // for identity + contributor stats. A read-only token can't git push -> "push failed".
+    body: JSON.stringify({ client_id: cid, scope: 'public_repo read:user' })
   })
   const d = (await r.json()) as DeviceCodeResp
   if (!d.device_code || !d.user_code || !d.verification_uri) {
