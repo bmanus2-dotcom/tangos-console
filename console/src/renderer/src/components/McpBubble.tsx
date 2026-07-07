@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Power, PowerOff, Copy, Plug, Users, Check, Sparkles } from 'lucide-react'
 import type { McpState, ConnectedClient } from '../../../shared/types'
 import { ROLE_NAMES } from '../../../shared/types'
@@ -9,6 +9,13 @@ interface RegisterOutcome {
   path: string
   action: string
   message?: string
+}
+
+function ago(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000))
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  return `${Math.round(s / 3600)}h ago`
 }
 
 export default function McpBubble({
@@ -26,6 +33,23 @@ export default function McpBubble({
   const [prompt, setPrompt] = useState('')
   const [copied, setCopied] = useState(false)
   const running = mcp?.running ?? false
+
+  // One row per AGENT (by name) — multiple live sessions of the same AI collapse
+  // into a single entry so a reconnecting Grok isn't three rows.
+  const agents = useMemo(() => {
+    const m = new Map<string, ConnectedClient[]>()
+    for (const c of clients) {
+      const arr = m.get(c.name)
+      if (arr) arr.push(c)
+      else m.set(c.name, [c])
+    }
+    return [...m.entries()].map(([name, list]) => ({
+      name,
+      id: list[0].id,
+      role: list.find((c) => c.role !== 'Unassigned')?.role ?? list[0].role,
+      sessions: list.length
+    }))
+  }, [clients])
 
   useEffect(() => {
     window.tangos.agentPrompt().then(setPrompt).catch(() => setPrompt(''))
@@ -83,6 +107,19 @@ export default function McpBubble({
               {mcp?.connectedClients ?? 0}
             </span>
           </div>
+          <div className="kv">
+            <span className="k">Traffic</span>
+            <span className="v" title="Raw HTTP requests that have hit the endpoint (any client, any outcome).">
+              {mcp?.requestsSeen ?? 0} req{mcp?.lastContactAt ? ` · last ${ago(mcp.lastContactAt)}` : ' · none yet'}
+            </span>
+          </div>
+          {(mcp?.connectedClients ?? 0) === 0 && (mcp?.requestsSeen ?? 0) > 0 && (
+            <p className="notice warn" style={{ marginTop: 6 }}>
+              Something reached the endpoint but no MCP session formed. That client probably
+              can&apos;t speak Streamable HTTP MCP (browser chatbots can&apos;t) — use the mcp-run
+              fallback in the prompt below.
+            </p>
+          )}
           <div className="kv" style={{ alignItems: 'stretch', flexDirection: 'column', gap: 4 }}>
             <span className="k">URL</span>
             <div className="url-box">{mcp?.url}</div>
@@ -141,20 +178,23 @@ export default function McpBubble({
         {copied ? 'Copied' : 'Copy prompt'}
       </button>
 
-      <div className="section-title" style={{ marginTop: 14 }}>Connected agents · {clients.length}</div>
-      {clients.length === 0 ? (
-        <p className="notice" style={{ marginTop: 0 }}>No AI connected yet. Add the URL to your AI and it&apos;ll appear here — designate each one a role to give it standing instructions via next_batch.</p>
+      <div className="section-title" style={{ marginTop: 14 }}>Connected agents · {agents.length}</div>
+      {agents.length === 0 ? (
+        <p className="notice" style={{ marginTop: 0 }}>No AI connected yet. Add the URL to your AI and it&apos;ll appear here — assign each one a role to give it standing instructions via next_batch (remembered across sessions).</p>
       ) : (
         <div className="agent-list">
-          {clients.map((c) => (
-            <div className="agent-row" key={c.id}>
-              <span className="agent-dot" style={{ background: aiColor(c.name) }} />
-              <span className="agent-name">{c.name}</span>
+          {agents.map((a) => (
+            <div className="agent-row" key={a.name}>
+              <span className="agent-dot" style={{ background: aiColor(a.name) }} />
+              <span className="agent-name">
+                {a.name}
+                {a.sessions > 1 && <span className="agent-sessions"> · {a.sessions} sessions</span>}
+              </span>
               <select
-                className="agent-role"
-                value={c.role}
-                onChange={(e) => window.tangos.setClientRole(c.id, e.target.value)}
-                title="Designate this agent's role — sets standing instructions injected into its next_batch"
+                className={`agent-role${a.role === 'Unassigned' ? ' needs' : ''}`}
+                value={a.role}
+                onChange={(e) => window.tangos.setClientRole(a.id, e.target.value)}
+                title="Assign this agent's role — sets standing instructions injected into its next_batch. Remembered for this agent across sessions."
               >
                 {ROLE_NAMES.map((r) => (
                   <option key={r} value={r}>{r}</option>

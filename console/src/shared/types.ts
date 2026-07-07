@@ -131,6 +131,8 @@ export interface McpState {
   port: number | null
   url: string | null
   connectedClients: number
+  requestsSeen: number
+  lastContactAt: number | null
 }
 
 // ---- live activity events -------------------------------------------------
@@ -162,6 +164,7 @@ export interface ConnectedClient {
   name: string
   role: string
   connectedAt: number
+  emptyPolls?: number // consecutive empty next_batch polls, for the idle stop signal
 }
 
 /** Built-in agent roles, each with standing instructions injected into next_batch. */
@@ -219,6 +222,12 @@ export interface BatchItem {
   id: string
   ref: string // function name, or "module:0xaddr"
   label?: string
+  // Resolved metadata captured when added from the Atlas, so next_batch can hand the
+  // agent a ready-to-run verify call instead of making it guess required args.
+  module?: string
+  addr?: number
+  size?: number
+  srcPath?: string
 }
 
 export type BatchStatus = 'queued' | 'active' | 'done'

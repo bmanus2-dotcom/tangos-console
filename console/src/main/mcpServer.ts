@@ -5,7 +5,7 @@ import { z, type ZodTypeAny } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
-import type { TangosDescriptor, TangosRuntime, TangosTool, Batch, RunResult, ConnectedClient } from '../shared/types'
+import type { TangosDescriptor, TangosRuntime, TangosTool, Batch, BatchItem, RunResult, ConnectedClient } from '../shared/types'
 import { ROLE_PRESETS } from '../shared/types'
 
 // Re-export so consumers can observe the exact bus instance runTool publishes to.
@@ -88,7 +88,54 @@ function describeTool(tool: TangosTool): string {
   parts.push(tool.readOnly ? '[read-only]' : '[MUTATES repo state]')
   if (tool.apply) parts.push(`Defaults to a dry run; set apply=true to write changes (${tool.apply}).`)
   if (tool.needs?.length) parts.push(`Requires: ${tool.needs.join(', ')}.`)
+  const req = (tool.args ?? []).filter((a) => a.required).map((a) => a.name)
+  if (req.length) parts.push(`REQUIRED args: ${req.join(', ')}.`)
   return parts.join(' ')
+}
+
+/** Build a ready-to-run `match` call for a batch target so the agent never has to guess
+ *  (and never omits the required `c` arg — the failure that stalled the first batch). */
+function verifyCallFor(item: BatchItem, descriptor: TangosDescriptor): string | null {
+  const match = descriptor.tools?.find((t) => t.id === 'match')
+  if (!match) return null
+  const name = item.ref
+  const ext = name.startsWith('_Z') ? 'cpp' : 'c'
+  const c = item.srcPath || `src/${name}.${ext}`
+  let addr = item.addr != null ? '0x' + item.addr.toString(16).padStart(8, '0') : null
+  if (!addr) {
+    const m = /_([0-9a-f]{8})$/i.exec(name)
+    if (m) addr = '0x' + m[1].toLowerCase()
+  }
+  const size = item.size != null ? '0x' + item.size.toString(16) : null
+  const ver = match.args?.find((a) => a.name === 'version')?.default
+  // overlay module: from the item, else derived from a func_ovNNN_ name
+  let mod = item.module
+  if (!mod || mod === '') {
+    const mo = /_ov(\d+)_/.exec(name)
+    if (mo) mod = 'ov' + mo[1]
+  }
+  const args: Record<string, string | boolean> = { c, func: name }
+  if (addr) args.addr = addr
+  if (size) args.size = size
+  if (typeof ver === 'string') args.version = ver
+  if (mod && mod.startsWith('ov')) args.module = mod // overlays need it or the target reads empty
+  if (item.size != null && item.size > 0x800) args.brief = true // big function -> keep output small
+  const missing = [!addr ? 'addr' : '', !size ? 'size' : ''].filter(Boolean)
+  const note = missing.length ? `   (fill ${missing.join(' + ')}: worklist --addr ${addr ?? '0x...'} --pretty)` : ''
+  return JSON.stringify(args) + note
+}
+
+// Cap the text handed back to the AI so a single verbose tool (falign/fdiff on a
+// multi-KB function can dump 50-70 KB) can't flood its context. The human still sees
+// the FULL output in the live viewer — this only trims the MCP response. Head + tail
+// keep the summary and the final verdict; the middle (the long aligned diff) is cut.
+const MAX_TOOL_OUTPUT = 9000
+function capOutput(s: string): string {
+  if (s.length <= MAX_TOOL_OUTPUT) return s
+  const head = s.slice(0, 6400)
+  const tail = s.slice(-1800)
+  const cut = s.length - head.length - tail.length
+  return `${head}\n\n...[${cut} chars trimmed to save context — full output is in the human's live viewer. Narrow addr/size, or use --brief/--quiet.]...\n\n${tail}`
 }
 
 function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClient | undefined): McpServer {
@@ -102,7 +149,7 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
       const c = getClient()
       const res = await getCtx().run(tool, input ?? {}, 'ai', c ? { name: c.name, role: c.role } : undefined)
       const header = `[tangos] ${tool.id} -> ${res.status}${res.exitCode != null ? ` (exit ${res.exitCode})` : ''}`
-      const text = `${header}\n\n${res.output || '(no output)'}`
+      const text = `${header}\n\n${capOutput(res.output || '(no output)')}`
       return { content: [{ type: 'text' as const, text }], isError: res.status !== 'ok' }
     })
   }
@@ -115,20 +162,66 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
       {},
       async () => {
         const b = api.next()
-        if (!b) return { content: [{ type: 'text' as const, text: '[tangos] batch queue is empty.' }] }
+        const idle = getClient()
+        if (!b) {
+          // No batch assigned: WAIT. The only allowed action while idle is to re-poll
+          // next_batch. This is deliberately the whole message — do not let an idle agent
+          // self-assign work (the repeated token-burn: reading long notes, dumping the
+          // worklist, starting coddog on an empty queue). Tools come out only once a real
+          // batch is returned below.
+          const n = idle ? (idle.emptyPolls = (idle.emptyPolls ?? 0) + 1) : 1
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text:
+                  `[tangos] queue empty — no batch assigned (idle poll ${n}). WAIT for work. Your ONLY action right now is to call next_batch again in ~30-60s. Do NOT call any other tool (not worklist, coddog, progress, triage, or anything else), do NOT read notes or files, do NOT pick your own targets. Begin using tools ONLY when next_batch returns an actual batch. Sitting idle and re-polling is cheap and correct; exploring or self-assigning work while the queue is empty is what wastes tokens. (If you would rather not idle, it is fine to stop and let the human re-engage you.)`
+              }
+            ]
+          }
+        }
+        if (idle) idle.emptyPolls = 0
         const c = getClient()
+        const desc = getCtx().descriptor
         const rolePrompt = c && c.role && c.role !== 'Unassigned' ? ROLE_PRESETS[c.role] : undefined
         const prefix = rolePrompt ? `[You are the "${c!.role}" agent.] ${rolePrompt}\n\n` : ''
+        const hasMatch = !!desc.tools?.find((t) => t.id === 'match')
+
         const targets = b.items.length
-          ? '\n\nTargets:\n' + b.items.map((i) => `- ${i.ref}${i.label ? ` (${i.label})` : ''}`).join('\n')
+          ? '\n\nTargets:\n' +
+            b.items
+              .map((i) => {
+                const head = `- ${i.ref}${i.label ? ` (${i.label})` : ''}`
+                const call = hasMatch ? verifyCallFor(i, desc) : null
+                return call ? `${head}\n    match -> ${call}` : head
+              })
+              .join('\n')
           : ''
-        // Surface the repo's known walls so a connected AI doesn't rediscover a proven-unreachable
-        // shape (and tells the user when it hits one) rather than grinding it silently.
-        const walls = getCtx().descriptor?.project?.knownWalls
-        const wallsNote = walls ? `\n\n[known walls — verify your near-miss IS one, then say so and move on; do not grind or give up blanket]\n${walls}` : ''
+
+        // How to actually run the work without stalling on the first tool error.
+        const guide = hasMatch
+          ? '\n\nHOW TO WORK EACH TARGET (do NOT stop on the first error):\n' +
+            '1. Every target has a ready `match` call above (required args: c, func, addr, size). Use it verbatim — never omit `c`.\n' +
+            '2. `c` is the candidate source path; create the file if it does not exist. Fill any placeholder from `worklist --addr <addr> --pretty` or chaos-db.json.\n' +
+            '3. If a tool returns a validation error (-32602) or fails: read tangos.json tools[] for that tool\'s required args, fix the call, and RETRY. Do not end your turn on one failed call.\n' +
+            '4. Use `fdiff` (required: c, name; plus module/addr/size or target-hex) on the worst divergences, edit the source, then `match` again. `falign` handles size-mismatched candidates but is EXPENSIVE on large functions — pass `"quiet": true` or `"limit": 1` and fix the earliest diverging block first.\n' +
+            '5. Overlay (ov*) targets already include `module` in the ready call — keep it, or the ROM target reads back empty. Run heavy tools one at a time (do not bundle several `match` calls in one shell); pass `"brief": true` for large functions to keep output small.\n' +
+            '6. When these targets are done, call `next_batch` again for more. If it returns empty, WAIT: re-poll next_batch every ~30-60s and do nothing else. While the queue is empty, next_batch is the ONLY tool you may call — no worklist, coddog, progress, triage, or reading notes to find your own targets. Idle means wait, not explore; only start pulling tools again when next_batch hands you a real batch.\n' +
+            '7. Coordinate: `claims_check` a target\'s span before working it; `claims_lock` (module/start/end) to reserve it and `claims_release` when it is banked. The console posts under your handle with its own key — you never need a key.\n' +
+            '8. Stay in your lane: edit source ONLY for the targets above. If an edit regresses a function (worse diff or bigger size), REVERT it — never leave a tracked source file worse than you found it. Keep scratch files, notes, and session reports in a temp/scratch dir, NEVER inside the repo or beside source files.\n' +
+            'Fallback if native MCP tools are unavailable in your client: run `npx tsx scripts/mcp-run.mts <calls.json> <your-name>` (e.g. grok) from the tangOS console dir, where calls.json is [{"tool":"match","args":{...}}]. Pass your name so the live viewer tags your runs correctly (omitting it shows "agent").'
+          : ''
+
+        const walls = desc.project?.knownWalls
+        const wallsNote = walls
+          ? `\n\n[known walls — verify your near-miss IS one, then say so and move on; do not grind or give up blanket]\n${walls}`
+          : ''
         return {
           content: [
-            { type: 'text' as const, text: `${prefix}[tangos batch] "${b.title}" (${b.items.length} targets)\n\n${b.prompt}${targets}${wallsNote}` }
+            {
+              type: 'text' as const,
+              text: `${prefix}[tangos batch] "${b.title}" (${b.items.length} targets)\n\n${b.prompt}${targets}${guide}${wallsNote}`
+            }
           ]
         }
       }
@@ -153,9 +246,24 @@ export class McpManager {
   private httpServer: HttpServer | null = null
   private transports = new Map<string, StreamableHTTPServerTransport>()
   private clients = new Map<string, ConnectedClient>()
+  private lastSeen = new Map<string, number>() // sessionId -> last request time, for evicting ghosts
+  private staleTimer: ReturnType<typeof setInterval> | null = null
   private _port: number | null = null
+  // Raw endpoint traffic — lets the human tell "nothing ever hit us" (client never
+  // reached the server) from "reached but the MCP handshake failed" (requests > 0,
+  // clients still 0). The exact situation when an agent claims it connected but the
+  // roster stays empty.
+  private _requestsSeen = 0
+  private _lastContactAt = 0
   private getCtx: () => McpContext
   onClientsChange?: () => void
+  // Fired on raw endpoint traffic (throttled by the consumer) so the UI can show
+  // "N requests seen" even when no MCP session ever forms.
+  onTraffic?: () => void
+  // Persistent per-agent roles: look up a remembered role by agent name on connect,
+  // and report assignments so main can save them across sessions.
+  roleForName?: (name: string) => string | undefined
+  onRoleAssigned?: (name: string, role: string) => void
 
   constructor(getCtx: () => McpContext) {
     this.getCtx = getCtx
@@ -173,15 +281,49 @@ export class McpManager {
   get connectedClients(): number {
     return this.clients.size
   }
+  get requestsSeen(): number {
+    return this._requestsSeen
+  }
+  get lastContactAt(): number | null {
+    return this._lastContactAt || null
+  }
   getClients(): ConnectedClient[] {
     return [...this.clients.values()]
   }
   setRole(id: string, role: string): void {
     const c = this.clients.get(id)
-    if (c) {
-      c.role = role
-      this.onClientsChange?.()
+    if (!c) return
+    c.role = role
+    // apply to any other live sessions of the same agent, and remember it for next time
+    for (const other of this.clients.values()) if (other.name === c.name) other.role = role
+    this.onRoleAssigned?.(c.name, role)
+    this.onClientsChange?.()
+  }
+
+  private touch(id?: string): void {
+    if (id) this.lastSeen.set(id, Date.now())
+  }
+
+  // Evict sessions that have gone silent — an agent that dropped without a clean
+  // DELETE (script process.exit, editor session drop) leaves a ghost otherwise.
+  private evictStale(): void {
+    const STALE_MS = 90_000
+    const now = Date.now()
+    let changed = false
+    for (const id of [...this.clients.keys()]) {
+      if (now - (this.lastSeen.get(id) ?? 0) > STALE_MS) {
+        try {
+          this.transports.get(id)?.close()
+        } catch {
+          /* ignore */
+        }
+        this.transports.delete(id)
+        this.clients.delete(id)
+        this.lastSeen.delete(id)
+        changed = true
+      }
     }
+    if (changed) this.onClientsChange?.()
   }
 
   start(port = 4808): Promise<{ port: number; url: string }> {
@@ -191,18 +333,35 @@ export class McpManager {
     app.use(express.json({ limit: '8mb' }))
 
     app.post('/mcp', async (req: Request, res: Response) => {
+      this._requestsSeen++
+      this._lastContactAt = Date.now()
+      this.onTraffic?.()
       const sessionId = req.headers['mcp-session-id'] as string | undefined
       let transport: StreamableHTTPServerTransport | undefined
       if (sessionId && this.transports.has(sessionId)) {
         transport = this.transports.get(sessionId)
+        this.touch(sessionId)
       } else if (!sessionId && isInitializeRequest(req.body)) {
+        // Name the client from the initialize request itself — a client that completes
+        // `initialize` but never sends the `notifications/initialized` follow-up would
+        // otherwise stay stuck on "connecting…". oninitialized still refines it later.
+        const initName = normalizeName(
+          (req.body as { params?: { clientInfo?: { name?: string } } })?.params?.clientInfo?.name
+        )
         let sid: string | undefined
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (id) => {
             sid = id
             this.transports.set(id, transport!)
-            this.clients.set(id, { id, name: 'connecting…', role: 'Unassigned', connectedAt: Date.now() })
+            const remembered = this.roleForName?.(initName)
+            this.clients.set(id, {
+              id,
+              name: initName,
+              role: remembered ?? 'Unassigned',
+              connectedAt: Date.now()
+            })
+            this.lastSeen.set(id, Date.now())
             this.onClientsChange?.()
           }
         })
@@ -221,6 +380,8 @@ export class McpManager {
             const c = this.clients.get(sid)
             if (c) {
               c.name = normalizeName(info?.name)
+              const remembered = this.roleForName?.(c.name)
+              if (remembered) c.role = remembered // restore the role this agent had before
               this.onClientsChange?.()
             }
           }
@@ -234,18 +395,28 @@ export class McpManager {
     })
 
     const sessionRequest = async (req: Request, res: Response) => {
+      this._requestsSeen++
+      this._lastContactAt = Date.now()
+      this.onTraffic?.()
       const sessionId = req.headers['mcp-session-id'] as string | undefined
       if (!sessionId || !this.transports.has(sessionId)) {
         res.status(400).send('Invalid or missing session ID')
         return
       }
+      this.touch(sessionId)
       await this.transports.get(sessionId)!.handleRequest(req, res)
     }
     app.get('/mcp', sessionRequest)
     app.delete('/mcp', sessionRequest)
 
     app.get('/health', (_req, res) => {
-      res.json({ ok: true, name: 'tangos', clients: this.clients.size })
+      res.json({
+        ok: true,
+        name: 'tangos',
+        clients: this.clients.size,
+        requestsSeen: this._requestsSeen,
+        lastContactAt: this._lastContactAt || null
+      })
     })
 
     return new Promise((resolve, reject) => {
@@ -254,12 +425,17 @@ export class McpManager {
       http.listen(port, '127.0.0.1', () => {
         this.httpServer = http
         this._port = port
+        this.staleTimer = setInterval(() => this.evictStale(), 30_000)
         resolve({ port, url: this.url! })
       })
     })
   }
 
   async stop(): Promise<void> {
+    if (this.staleTimer) {
+      clearInterval(this.staleTimer)
+      this.staleTimer = null
+    }
     for (const t of this.transports.values()) {
       try {
         await t.close()
@@ -269,6 +445,7 @@ export class McpManager {
     }
     this.transports.clear()
     this.clients.clear()
+    this.lastSeen.clear()
     this.onClientsChange?.()
     await new Promise<void>((resolve) => {
       if (!this.httpServer) return resolve()

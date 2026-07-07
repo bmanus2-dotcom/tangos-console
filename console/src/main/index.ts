@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard } from 'ele
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync, watch, type FSWatcher } from 'node:fs'
+import { readFileSync, writeFileSync, watch, existsSync, unlinkSync, type FSWatcher } from 'node:fs'
 import { activityBus } from './activityBus'
 import { McpManager } from './mcpServer'
 import { loadDescriptor, DESCRIPTOR_FILENAME } from './descriptor'
@@ -46,7 +46,7 @@ const state: AppState = {
   allowMutations: true,
   enabledToolIds: [],
   batches: [],
-  safeMode: false,
+  safeMode: true,
   baseBranch: null,
   reviews: []
 }
@@ -123,18 +123,19 @@ function currentRuntime(): TangosRuntime {
   return state.descriptor?.runtime ?? { cwd: '.', python: 'python', shell: false }
 }
 
-// Remember the last-opened repo so tangOS reopens it on launch.
+// Remember the last-opened repo + each agent's assigned role across sessions.
+let agentRoles: Record<string, string> = {}
 function settingsFile(): string {
   return join(app.getPath('userData'), 'tangos-settings.json')
 }
 function saveSettings(): void {
   try {
-    writeFileSync(settingsFile(), JSON.stringify({ lastRepo: state.repoPath }))
+    writeFileSync(settingsFile(), JSON.stringify({ lastRepo: state.repoPath, agentRoles }))
   } catch {
     /* ignore */
   }
 }
-function loadSettings(): { lastRepo?: string } {
+function loadSettings(): { lastRepo?: string; agentRoles?: Record<string, string> } {
   try {
     return JSON.parse(readFileSync(settingsFile(), 'utf8'))
   } catch {
@@ -152,6 +153,22 @@ const mcp = new McpManager(() => ({
   run: runToolSafely
 }))
 mcp.onClientsChange = () => pushState()
+// Push raw-traffic updates to the UI at most ~once/2s so a client that hits the
+// endpoint but never completes the MCP handshake still shows up as "requests seen".
+let trafficPush: NodeJS.Timeout | null = null
+mcp.onTraffic = () => {
+  if (trafficPush) return
+  trafficPush = setTimeout(() => {
+    trafficPush = null
+    pushState()
+  }, 2000)
+}
+mcp.roleForName = (name) => agentRoles[name]
+mcp.onRoleAssigned = (name, role) => {
+  if (role && role !== 'Unassigned') agentRoles[name] = role
+  else delete agentRoles[name]
+  saveSettings()
+}
 
 let mainWindow: BrowserWindow | null = null
 
@@ -174,7 +191,9 @@ function mcpState(): McpState {
     running: mcp.running,
     port: mcp.port,
     url: mcp.url,
-    connectedClients: mcp.connectedClients
+    connectedClients: mcp.connectedClients,
+    requestsSeen: mcp.requestsSeen,
+    lastContactAt: mcp.lastContactAt
   }
 }
 
@@ -191,14 +210,23 @@ function agentPrompt(): string {
     `You are connecting to tangOS Console — a local bridge that exposes the ${title} toolchain to you as MCP tools, with a live viewer the human is watching in real time.`,
     proj?.tagline ? `Project: ${proj.tagline}` : null,
     '',
-    'CONNECT (MCP over Streamable HTTP):',
-    `  URL:          ${url}`,
-    `  Claude Code:  ${cliCommand(url)}`,
+    'CONNECT — the endpoint is the same for everyone; only the way you register it differs by client. Add it as a Streamable HTTP MCP server:',
+    `  URL (Streamable HTTP):  ${url}`,
+    `  - Claude Code:                       ${cliCommand(url)}`,
+    `  - Cursor / Cline / Windsurf / Roo:   add to your mcp.json -> "mcpServers": { "tangos": { "url": "${url}" } }`,
+    `  - Claude Desktop:                    "tangos": { "command": "npx", "args": ["-y", "mcp-remote", "${url}"] }`,
+    '  - No native MCP (a browser chatbot like grok.com / chatgpt.com, or any client that cannot reach a local HTTP MCP): you CANNOT connect directly. Have the human run your calls, or from the tangOS console dir run:',
+    '        npx tsx scripts/mcp-run.mts <calls.json> <your-name>',
+    '      where calls.json is e.g. [{"tool":"next_batch","args":{}}] — pass your name (grok, glm, ...) so the live viewer tags your runs.',
+    '  VERIFY you actually connected: call list_tools (or next_batch) and confirm a real tool result comes back. If nothing round-trips, you are NOT connected — do not report "connected" without a tool response, and check that the console shows your session under Connected agents.',
     '',
     'THEN:',
-    '  1. Call next_batch to pull the next queued unit of work. It returns your assigned role (if any), the target functions, and this repo\'s KNOWN WALLS — patterns proven unmatchable; heed them and do not grind them. Loop next_batch to drain the queue; stop when it reports empty.',
-    `  2. Drive the toolchain to do the work: ${shown}.`,
-    '  3. Every call streams into the human\'s live viewer tagged with your name — skip the narration and just work. If you hit a known wall, say so plainly and move on rather than grinding.',
+    '  1. Your first and ONLY action is to call next_batch, then WAIT. Until it returns an actual batch you are idle: if it comes back empty, wait ~30-60s and call next_batch again, and do NOTHING else — do not call any other tool, do not read files or notes, do not "set up" or pick your own targets. Just wait and re-poll. Self-assigning work on an empty queue is the #1 way to waste tokens here; do not do it.',
+    `  2. ONLY once next_batch hands you a real batch do you start using tools. It gives your role (if any), each target WITH a ready-to-run match call, this repo's KNOWN WALLS, and how to work them. Then drive the toolchain: ${shown}.`,
+    '  3. Respect required args: each tool lists its REQUIRED args (see list_tools or tangos.json tools[]) — e.g. match needs c, func, addr, size. Use the ready call next_batch gives you; never omit `c`.',
+    '  4. On any tool error (-32602 / compile fail): read that tool\'s args in tangos.json, fix the call, and RETRY. Never end your turn on the first failed call.',
+    '  5. Every call streams into the human\'s live viewer tagged with your name — skip the narration and just work. If you hit a known wall, say so plainly and move on rather than grinding.',
+    '  6. Stay in your lane: edit source only for your assigned targets, and if an edit makes a function worse, revert it — never leave a tracked file regressed. Keep scratch files, notes, and reports in a temp dir, not in the repo or next to source.',
     proj?.readFirst ? `\nREAD FIRST: ${proj.readFirst}` : null
   ]
   return lines.filter((l) => l !== null).join('\n').trim()
@@ -306,13 +334,20 @@ function setRepo(path: string | null): RepoState {
   return repoState()
 }
 
+// The mascot icon for the taskbar + window (build/icon.png, packed with the app).
+function appIcon(): string | undefined {
+  const p = join(app.getAppPath(), 'build', 'icon.png')
+  return existsSync(p) ? p : undefined
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: 1500,
+    height: 860,
     minWidth: 900,
     minHeight: 640,
     title: 'tangOS',
+    icon: appIcon(),
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -454,6 +489,70 @@ ipcMain.handle('atlas:generate', async () => {
   const db = readAtlas(state.repoPath, state.descriptor)
   atlasCache = { ...atlasCache, repo: state.repoPath, local: db }
   return db
+})
+
+// Generate a batch of N functions scheduled by opcode similarity to already-matched
+// code (sm64ds: coddog). Each target carries its closest matched sibling as a label so
+// the agent has scaffolding. Fills the composer; the human reviews before sending.
+ipcMain.handle('batch:generate', async (_e, count = 16) => {
+  if (!state.repoPath || !state.descriptor) throw new Error('no repo loaded')
+  // A read-only scheduler that writes a worklist JSONL: coddog, or any tool exposing
+  // both `limit` and `out` args so this stays repo-agnostic.
+  const sched =
+    state.descriptor.tools.find((t) => t.id === 'coddog') ??
+    state.descriptor.tools.find(
+      (t) => t.readOnly && t.args?.some((a) => a.name === 'out') && t.args?.some((a) => a.name === 'limit')
+    )
+  if (!sched) throw new Error('this repo has no similarity scheduler (coddog) in tangos.json')
+
+  const outPath = join(app.getPath('temp'), `tangos-batch-${randomUUID()}.jsonl`)
+  await runTool({
+    tool: sched,
+    values: { limit: count, out: outPath },
+    runtime: currentRuntime(),
+    repoPath: state.repoPath,
+    source: 'user',
+    allowMutations: false,
+    extraEnv: secretsEnv()
+  })
+
+  let lines: string[] = []
+  try {
+    lines = readFileSync(outPath, 'utf8').split('\n').filter((l) => l.trim())
+  } catch {
+    throw new Error('scheduler produced no worklist (see the live viewer for its output)')
+  }
+  const items: BatchItem[] = []
+  for (const line of lines.slice(0, count)) {
+    try {
+      const r = JSON.parse(line) as {
+        name: string; module?: string; addr?: string; size?: string
+        coddog_sim?: number; siblings?: { name: string; sim: number }[]
+      }
+      const sib = r.siblings?.[0]
+      const sim = Math.round((r.coddog_sim ?? sib?.sim ?? 0) * 100)
+      items.push({
+        id: `gen-${r.name}`,
+        ref: r.name,
+        module: r.module,
+        addr: r.addr ? parseInt(r.addr, 16) : undefined,
+        size: r.size ? parseInt(r.size, 16) : undefined,
+        label: sib ? `${sim}% like ${sib.name}` : undefined
+      })
+    } catch {
+      /* skip malformed rows */
+    }
+  }
+  try {
+    unlinkSync(outPath)
+  } catch {
+    /* ignore */
+  }
+  if (!items.length) throw new Error('scheduler returned no functions')
+  const prompt =
+    'Match these targets. Each was picked by opcode similarity to an already-matched sibling ' +
+    '(shown per target) — lean on that sibling as scaffolding. Run `match` on each; use `fdiff` on near-misses.'
+  return { title: `Similarity batch (${items.length})`, prompt, items } satisfies BatchDraft
 })
 
 ipcMain.handle('repo:pick', async () => {
@@ -688,6 +787,7 @@ ipcMain.handle('atlas:popout', (_e, module: string) => {
     height: 920,
     minWidth: 400,
     minHeight: 560,
+    icon: appIcon(),
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -715,6 +815,7 @@ ipcMain.handle('clipboard:write', (_e, text: string) => {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null) // no native File/Edit/View menu — we use our own chrome
   const saved = loadSettings()
+  agentRoles = saved.agentRoles ?? {}
   if (saved.lastRepo && looksLikeRepo(saved.lastRepo)) setRepo(saved.lastRepo)
   createWindow()
   app.on('activate', () => {

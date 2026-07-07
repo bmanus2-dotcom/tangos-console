@@ -146,6 +146,9 @@ export default function App(): JSX.Element {
   function addToBatch(item: BatchItem): void {
     setDraft((d) => (d.items.some((i) => i.ref === item.ref) ? d : { ...d, items: [...d.items, item] }))
   }
+  function removeFromBatch(ref: string): void {
+    setDraft((d) => ({ ...d, items: d.items.filter((i) => i.ref !== ref) }))
+  }
   function switchApp(target: AppView): void {
     if (target === view) return
     setSplash(APP_LABEL[target])
@@ -198,6 +201,8 @@ export default function App(): JSX.Element {
   else body = view === 'atlas'
     ? <AtlasView
         onAdd={addToBatch}
+        onRemove={removeFromBatch}
+        draftRefs={new Set(draft.items.map((i) => i.ref))}
         liveEnabled={!!repo?.descriptor?.data?.committedDbUrl}
         claimsEnabled={!!repo?.descriptor?.data?.claimsApi}
       />
@@ -246,7 +251,7 @@ export default function App(): JSX.Element {
                 <KeyRound size={14} />
                 Keys
               </button>
-              <div className={`bubble-pop aero-panel${keysOpen ? ' open' : ''}`}>
+              <div className={`bubble-pop aero-panel solid${keysOpen ? ' open' : ''}`}>
                 {keysOpen && <KeyVault />}
               </div>
             </div>
@@ -270,7 +275,15 @@ export default function App(): JSX.Element {
       {body}
 
       {showControls && reviews.length > 0 && <ReviewPanel reviews={reviews} baseBranch={baseBranch} />}
-      {showControls && <PromptComposer draft={draft} onDraft={setDraft} batches={batches} mcpRunning={!!mcp?.running} />}
+      {showControls && (
+        <PromptComposer
+          draft={draft}
+          onDraft={setDraft}
+          batches={batches}
+          mcpRunning={!!mcp?.running}
+          readyAgents={clients.filter((c) => c.name && !c.name.startsWith('connecting')).length}
+        />
+      )}
       {splash && <Splash label={splash} />}
       {reloadNote && <div className="reload-toast aero-glass">{reloadNote}</div>}
     </div>
