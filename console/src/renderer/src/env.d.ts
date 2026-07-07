@@ -20,7 +20,7 @@ type FullState = {
   tourSeen: boolean
   useAgents: boolean
   autoLand: boolean
-  autoPush: { on: boolean; state: 'idle' | 'pushing' | 'ok' | 'error' | 'skipped'; message?: string; prUrl?: string; at?: number }
+  autoPush: { enabled: boolean; on: boolean; state: 'idle' | 'pushing' | 'ok' | 'error' | 'skipped'; message?: string; prUrl?: string; at?: number }
   looping: string[]
 }
 
@@ -82,6 +82,7 @@ export interface TangosApi {
   stopAi(agent: string): Promise<boolean>
   setUseAgents(on: boolean): Promise<boolean>
   setAutoLand(on: boolean): Promise<boolean>
+  setAutoPush(on: boolean): Promise<boolean>
   removeBatch(id: string): Promise<Batch[]>
   reorderBatch(id: string, dir: 'up' | 'down'): Promise<Batch[]>
   clearDoneBatches(): Promise<Batch[]>

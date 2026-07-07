@@ -20,7 +20,7 @@ type FullState = {
   tourSeen: boolean
   useAgents: boolean
   autoLand: boolean
-  autoPush: { on: boolean; state: 'idle' | 'pushing' | 'ok' | 'error' | 'skipped'; message?: string; prUrl?: string; at?: number }
+  autoPush: { enabled: boolean; on: boolean; state: 'idle' | 'pushing' | 'ok' | 'error' | 'skipped'; message?: string; prUrl?: string; at?: number }
   looping: string[]
 }
 
@@ -103,6 +103,7 @@ const api = {
   stopAi: (agent: string): Promise<boolean> => ipcRenderer.invoke('ai:stop', agent),
   setUseAgents: (on: boolean): Promise<boolean> => ipcRenderer.invoke('policy:setUseAgents', on),
   setAutoLand: (on: boolean): Promise<boolean> => ipcRenderer.invoke('policy:setAutoLand', on),
+  setAutoPush: (on: boolean): Promise<boolean> => ipcRenderer.invoke('policy:setAutoPush', on),
   removeBatch: (id: string): Promise<Batch[]> => ipcRenderer.invoke('batch:remove', id),
   reorderBatch: (id: string, dir: 'up' | 'down'): Promise<Batch[]> =>
     ipcRenderer.invoke('batch:reorder', { id, dir }),

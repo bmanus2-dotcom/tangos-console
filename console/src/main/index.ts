@@ -46,6 +46,7 @@ interface AppState {
   tourSeen: boolean
   useAgents: boolean // run drivers with parallel workers (and allow concurrent drives)
   autoLand: boolean // after a drive, bank + verify (crackloop land) the matches into the repo
+  autoPushEnabled: boolean // the "Push" toggle: with Writes + Review also on, auto-push matched work as a rolling PR
 }
 
 const state: AppState = {
@@ -62,7 +63,8 @@ const state: AppState = {
   reportsEnabled: false,
   tourSeen: false,
   useAgents: false,
-  autoLand: true
+  autoLand: true,
+  autoPushEnabled: false
 }
 
 // AIs set to run continuously (the "infinite" batch size): when their batch finishes we
@@ -100,7 +102,7 @@ let autoPushRunning = false
 let autoPushStatus: AutoPushStatus = { state: 'idle' }
 
 function autoPushActive(): boolean {
-  return state.allowMutations && state.safeMode
+  return state.autoPushEnabled && state.allowMutations && state.safeMode
 }
 
 /** Debounced: coalesce a burst of matches into one push ~20s after the last one. */
@@ -323,7 +325,8 @@ function saveSettings(): void {
         reportsEnabled: state.reportsEnabled,
         tourSeen: state.tourSeen,
         useAgents: state.useAgents,
-        autoLand: state.autoLand
+        autoLand: state.autoLand,
+        autoPushEnabled: state.autoPushEnabled
       })
     )
   } catch {
@@ -338,6 +341,7 @@ function loadSettings(): {
   tourSeen?: boolean
   useAgents?: boolean
   autoLand?: boolean
+  autoPushEnabled?: boolean
 } {
   try {
     return JSON.parse(readFileSync(settingsFile(), 'utf8'))
@@ -535,7 +539,7 @@ function fullState() {
     tourSeen: state.tourSeen,
     useAgents: state.useAgents,
     autoLand: state.autoLand,
-    autoPush: { on: autoPushActive(), ...autoPushStatus },
+    autoPush: { enabled: state.autoPushEnabled, on: autoPushActive(), ...autoPushStatus },
     looping: [...agentLoop]
   }
 }
@@ -1355,6 +1359,13 @@ ipcMain.handle('policy:setAutoLand', (_e, on: boolean) => {
   pushState()
   return state.autoLand
 })
+ipcMain.handle('policy:setAutoPush', (_e, on: boolean) => {
+  state.autoPushEnabled = !!on
+  autoPushStatus = { state: 'idle' } // clear any stale status when toggling
+  saveSettings()
+  pushState()
+  return state.autoPushEnabled
+})
 ipcMain.handle('policy:setReports', (_e, on: boolean) => {
   state.reportsEnabled = !!on
   setReportsEnabled(state.reportsEnabled)
@@ -1515,6 +1526,7 @@ app.whenReady().then(() => {
   state.tourSeen = saved.tourSeen ?? false
   state.useAgents = saved.useAgents ?? false
   state.autoLand = saved.autoLand ?? true
+  state.autoPushEnabled = saved.autoPushEnabled ?? false
   setReportsEnabled(state.reportsEnabled)
   ensureTips()
   if (saved.lastRepo && looksLikeRepo(saved.lastRepo)) setRepo(saved.lastRepo)

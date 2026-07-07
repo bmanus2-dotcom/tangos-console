@@ -45,12 +45,13 @@ export default function App(): JSX.Element {
   const [useAgents, setUseAgents] = useState(false)
   const [autoLand, setAutoLand] = useState(true)
   const [autoPush, setAutoPush] = useState<{
+    enabled: boolean
     on: boolean
     state: 'idle' | 'pushing' | 'ok' | 'error' | 'skipped'
     message?: string
     prUrl?: string
     at?: number
-  }>({ on: false, state: 'idle' })
+  }>({ enabled: false, on: false, state: 'idle' })
   const [looping, setLooping] = useState<string[]>([])
   const [tourSeen, setTourSeen] = useState(true) // assume seen until state loads, to avoid a flash
   const [detailName, setDetailName] = useState<string | null>(null)
