@@ -115,8 +115,11 @@ export default function AtlasView({
     }
   }
 
+  // Only real contributors: at least one matched function attributed to them. This drops the
+  // 0-count entries seeded from GitHub logins / PR authors (people with a commit but nothing
+  // merged into matched code yet) — they were showing as noise with a lock icon.
   const contributors = useMemo(
-    () => [...loginCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    () => [...loginCounts.entries()].filter(([, n]) => n >= 1).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     [loginCounts]
   )
 
@@ -234,10 +237,10 @@ export default function AtlasView({
                 key={name}
                 className={`contrib${authorFilter === name ? ' sel' : ''}`}
                 onClick={() => setAuthorFilter(authorFilter === name ? null : name)}
-                title={authorFilter === name ? 'show everyone' : n > 0 ? `show only ${name}` : `${name} — active claim, not yet merged`}
+                title={authorFilter === name ? 'show everyone' : `show only ${name}`}
               >
                 <span className="cdot" style={{ background: authorColors.get(name) ?? '#8896a5' }} />
-                {name} {n > 0 ? <b>{n.toLocaleString()}</b> : <Lock size={9} style={{ marginLeft: 2, opacity: 0.6 }} />}
+                {name} <b>{n.toLocaleString()}</b>
               </button>
             ))}
             {authorFilter && (
