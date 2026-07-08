@@ -74,8 +74,10 @@ def main():
 
     entries = [(s, png(art, s)) for s in SIZES]
     write_ico(entries, HERE / "icon.ico")
-    art.resize((256, 256), Image.LANCZOS).save(HERE / "icon.png")
-    print("wrote icon.ico (%d sizes, centered) + icon.png; content %s canvas %dpx" % (len(entries), box, art.size[0]))
+    # 512px so electron-builder can auto-generate the macOS .icns (it needs >=512);
+    # Windows uses icon.ico and just downscales this for the runtime window icon.
+    art.resize((512, 512), Image.LANCZOS).save(HERE / "icon.png")
+    print("wrote icon.ico (%d sizes, centered) + icon.png 512px; content %s canvas %dpx" % (len(entries), box, art.size[0]))
 
 
 if __name__ == "__main__":

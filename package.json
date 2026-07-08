@@ -10,7 +10,8 @@
   "scripts": {
     "console": "npm run dev -w console",
     "console:build": "npm run build -w console",
-    "console:dist": "npm run dist -w console"
+    "console:dist": "npm run dist -w console",
+    "console:dist:mac": "npm run dist:mac -w console"
   },
   "license": "MIT"
 }
