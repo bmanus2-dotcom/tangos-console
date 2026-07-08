@@ -1227,6 +1227,16 @@ function assignToAgent(agentName: string, role: string, count: number, loop: boo
 
 ipcMain.handle('ai:assign', async (_e, p: { agent: string; role?: string; count: number; loop?: boolean }) => {
   await assignToAgent(p.agent, p.role ?? 'Unassigned', p.count, !!p.loop)
+  // Infinite mode replaces the manual Drive button with Stop, so a console-driven agent (GLM/Claude)
+  // would otherwise sit on its freshly-queued batch forever - the "GLM on infinite never starts"
+  // bug. Kick the drive loop off here. Fire-and-forget: it runs until Stop, so awaiting it would
+  // hang this IPC for the whole session. (A live MCP agent self-serves via next_batch - skip it.)
+  if (p.loop && isConsoleDrivable(p.agent)) {
+    void startDriveLoop(p.agent).catch((e) => {
+      report('drive', { agent: p.agent, status: 'error', error: String((e as Error)?.message ?? e) })
+      pushState() // the loop cleared agentLoop on error; refresh so the box stops showing as looping
+    })
+  }
   return { ok: true }
 })
 // Stop an AI's continuous loop (it finishes its current batch, then no more are queued).
@@ -1492,14 +1502,17 @@ async function driveBatch(agentName: string): Promise<void> {
   }
 }
 
-ipcMain.handle('ai:drive', async (_e, agentName: string) => {
-  // Re-entrancy guard: one driver process per agent. driveBatch() adds to apiDriving
-  // synchronously (before its first await), so a second Drive click / auto-drive that lands
-  // in the same or a later tick sees it and no-ops instead of spawning a parallel glm_refine
-  // that double-walks the same worklist (the "two 6/14s" symptom).
-  if (apiDriving.has(agentName)) return { ok: true, already: true }
+// One drive for a console-driven agent - and, while it's in continuous (infinite) mode, generate +
+// assign + drive the next, and the next, until Stop. Guarded so an agent only ever has ONE loop:
+// driveLoopActive closes the brief between-batch window where apiDriving is momentarily empty, while
+// apiDriving still guards the driveBatch level itself (it's added synchronously before driveBatch's
+// first await, so a near-simultaneous second start no-ops instead of double-walking the worklist -
+// the "two 6/14s" symptom).
+const driveLoopActive = new Set<string>()
+async function startDriveLoop(agentName: string): Promise<void> {
+  if (driveLoopActive.has(agentName) || apiDriving.has(agentName)) return
+  driveLoopActive.add(agentName)
   try {
-    // Loop while this AI is in continuous mode: drive, then generate + assign the next.
     do {
       await driveBatch(agentName)
       if (!agentLoop.has(agentName)) break
@@ -1509,7 +1522,20 @@ ipcMain.handle('ai:drive', async (_e, agentName: string) => {
   } catch (e) {
     agentLoop.delete(agentName) // stop the loop on any error
     throw e
+  } finally {
+    driveLoopActive.delete(agentName)
   }
+}
+
+/** True when the console itself drives this agent: a keyed API provider (GLM/Claude) that isn't
+ *  currently a live MCP session. An MCP agent self-serves work via next_batch and needs no driver. */
+function isConsoleDrivable(name: string): boolean {
+  if (mcp.getClients().some((c) => c.name === name)) return false
+  return listSecrets().some((s) => LLM_KEYS[s.name] === name)
+}
+
+ipcMain.handle('ai:drive', async (_e, agentName: string) => {
+  await startDriveLoop(agentName)
   return { ok: true }
 })
 
