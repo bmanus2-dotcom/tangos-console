@@ -77,6 +77,7 @@ export default function Controller({
 }): JSX.Element {
   const [busy, setBusy] = useState<Record<string, string>>({}) // name -> loading label
   const [sizes, setSizes] = useState<Record<string, number>>({}) // name -> batch size (-1 = infinite)
+  const [notice, setNotice] = useState<string | null>(null) // gentle info toast (e.g. "no work for this role")
 
   // Latest run per agent in a single pass (instead of filter+sort over all runs per agent on
   // every output chunk — that was quadratic during a long scan and made the view lag/drop).
@@ -116,7 +117,15 @@ export default function Controller({
     try {
       await window.tangos.assignAi({ agent: name, role, count: loop ? 16 : size, loop })
     } catch (e) {
-      alert(String((e as Error).message ?? e))
+      // Strip Electron's "Error invoking remote method 'ai:assign': Error:" IPC wrapper.
+      const msg = String((e as Error).message ?? e).replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, '')
+      if (/^No work /i.test(msg)) {
+        // Not a failure — just nothing to do for this role. Show a calm, dismissable notice.
+        setNotice(msg.split('--- scheduler output ---')[0].trim())
+        window.setTimeout(() => setNotice(null), 7000)
+      } else {
+        alert(msg) // real errors keep the full dialog (with setup hints)
+      }
     } finally {
       setBusy((b) => ({ ...b, [name]: '' }))
     }
@@ -134,6 +143,11 @@ export default function Controller({
 
   return (
     <div className="panel aero-panel controller" data-tour="controller">
+      {notice && (
+        <div className="ctrl-notice" onClick={() => setNotice(null)} title="Click to dismiss">
+          {notice}
+        </div>
+      )}
       <div className="head">
         <h2>Chaos Controller</h2>
         {cartCount > 0 && (
