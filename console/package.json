@@ -86,7 +86,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "bmanus2-dotcom",
+      "owner": "tangosdev",
       "repo": "tangos-console",
       "releaseType": "release"
     }

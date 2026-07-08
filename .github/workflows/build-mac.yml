@@ -2,7 +2,7 @@ name: Build + publish macOS
 
 # electron-builder can only produce a macOS app on macOS, so the Intel (x64) and Apple
 # Silicon (arm64) .dmg builds are made here on a macOS runner and published to the public
-# bmanus2-dotcom/tangos-console Releases (the same feed the Windows build publishes to, so
+# tangosdev/tangos-console Releases (the same feed the Windows build publishes to, so
 # Mac users download + auto-update from one place).
 #
 # Trigger manually from the Actions tab, or automatically on a version tag (e.g.
