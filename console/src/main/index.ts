@@ -1009,6 +1009,15 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     // machine this is almost always a setup problem) with a targeted hint, not a generic message.
     const out = (res.output || '').trim()
     const tail = out ? out.slice(-800) : '(the scheduler produced no output at all)'
+    // A scheduler that classified its pool and chose nothing is NOT a setup failure — it just has
+    // no work for this role right now. Say that plainly instead of pointing at the ROM/deps.
+    if (/nothing to (refine|match|do)|chose 0\b|0 refine-routable|no (routable|refinable|eligible|matchable)/i.test(out)) {
+      const why =
+        sched.id === 'refine_wl'
+          ? 'No near-misses are close enough to refine right now — the pool has candidates but none pass the current divergence threshold. Switch this AI to the "Main matcher" role for fresh functions, or come back once more near-misses land.'
+          : 'The scheduler found no eligible targets for this role right now. Try a different role, size, or module.'
+      throw new Error(`No work for the "${role ?? 'selected'}" role right now.\n\n${why}\n\n--- scheduler output ---\n${tail}`)
+    }
     let hint: string
     if (/ModuleNotFoundError|No module named|ImportError/i.test(out))
       hint = 'Python packages are missing. In the repo folder run:  pip install -r requirements.txt  (needs capstone, ndspy, pyelftools).'
