@@ -935,7 +935,10 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
       runtime: currentRuntime(),
       source: 'user',
       repoPath: state.repoPath,
-      allowMutations: false,
+      // Batch generation only writes a temp worklist (outPath, in the app temp dir), never repo
+      // source, so it must not be gated by the Writes toggle. Some schedulers (refine_wl) are
+      // flagged mutating; allow this internal prep run regardless. Actual agent writes stay gated.
+      allowMutations: true,
       extraEnv: secretsEnv(),
       onSpawn: ({ kill }) => {
         schedKill = kill
