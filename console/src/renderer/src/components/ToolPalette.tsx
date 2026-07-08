@@ -90,7 +90,7 @@ export default function ToolPalette({
                           key={t.id}
                           className={`tool-row ${sel ? 'selected' : 'deselected'}`}
                           onClick={() => toggleTool(t.id)}
-                          title={sel ? 'Exposed to the AI — click to hide' : 'Hidden from the AI — click to expose'}
+                          title={sel ? 'Exposed to the AI - click to hide' : 'Hidden from the AI - click to expose'}
                         >
                           <span className="sel-dot">{sel ? <Check size={10} color="#fff" strokeWidth={4} /> : null}</span>
                           <span className="tl">

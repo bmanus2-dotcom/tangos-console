@@ -5,7 +5,7 @@ export interface RoleRec {
   why: string
 }
 
-/** Recommend a role for an AI ONLY from its measured strengths — no guessing a model's
+/** Recommend a role for an AI ONLY from its measured strengths - no guessing a model's
  *  strengths before it has a track record here. Returns role=null until there's data. */
 export function recommendRole(a: AiAgent): RoleRec {
   const s = a.stats
@@ -22,5 +22,5 @@ export function recommendRole(a: AiAgent): RoleRec {
     if (s.hitRate < 0.25) return { role: 'Explorer', why: 'surfaces targets but rarely lands directly' }
     if (s.hitRate >= 0.5) return { role: 'Main matcher', why: 'steady, reliable throughput' }
   }
-  return { role: null, why: 'still learning — assign it work to find its strengths' }
+  return { role: null, why: 'still learning - assign it work to find its strengths' }
 }

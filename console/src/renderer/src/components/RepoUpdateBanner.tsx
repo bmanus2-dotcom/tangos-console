@@ -43,7 +43,7 @@ export default function RepoUpdateBanner({
         setMsg('Updated to the latest.')
         setTimeout(() => setMsg(null), 4000)
       } else if (r.err && /diverged|fast-forward|non-fast/i.test(r.err)) {
-        setMsg("Your branch has local commits the remote doesn't — can't auto-update. Commit or reconcile manually.")
+        setMsg("Your branch has local commits the remote doesn't - can't auto-update. Commit or reconcile manually.")
       } else {
         setMsg(`Update failed: ${r.err ?? 'unknown error'}`)
       }
@@ -71,7 +71,7 @@ export default function RepoUpdateBanner({
       <div className="repo-warn">
         <AlertTriangle size={14} />
         <span>
-          This folder isn&apos;t a git checkout — looks like a <b>Download ZIP</b>. You can&apos;t commit or push from
+          This folder isn&apos;t a git checkout - looks like a <b>Download ZIP</b>. You can&apos;t commit or push from
           here, and the tooling may be out of date.{' '}
           {github ? (
             'Get a proper clone for a working setup:'

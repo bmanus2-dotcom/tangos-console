@@ -102,7 +102,7 @@ export async function commitMatchedWork(repo: string, message: string): Promise<
 }
 
 /** owner/repo parsed from a GitHub remote URL (https or ssh). Prefers "origin", then the
- *  current branch's push remote, then the first remote — so a fork named "fork" still works. */
+ *  current branch's push remote, then the first remote - so a fork named "fork" still works. */
 export async function remoteSlug(repo: string): Promise<{ owner: string; repo: string } | null> {
   const parse = (url: string): { owner: string; repo: string } | null => {
     const m = /github\.com[:/]([^/]+)\/([^/.]+?)(?:\.git)?\s*$/i.exec(url.trim())
@@ -169,7 +169,7 @@ export async function defaultBranch(repo: string): Promise<string> {
 /** Push the current branch to origin/<remoteBranch> using a token-authenticated URL (the token
  *  is never persisted to git config). The branch is session-owned so a plain push suffices:
  *  it creates the branch on the first push and fast-forwards it on later ones. (--force-with-lease
- *  is unusable here — there's no remote-tracking ref for an ad-hoc URL push, so it rejects the
+ *  is unusable here - there's no remote-tracking ref for an ad-hoc URL push, so it rejects the
  *  very first create.) On a non-ff (rare), fall back to a force push of the session branch. */
 export async function pushToBranch(
   repo: string,

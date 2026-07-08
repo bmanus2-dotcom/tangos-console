@@ -96,7 +96,7 @@ function serializeGen<T>(fn: () => Promise<T>): Promise<T> {
 
 // Auto-push: when Writes AND Review are both on, matched work is committed to the work branch,
 // pushed to a per-session remote branch, and surfaced as ONE rolling PR (the repo's PR rules /
-// CI gate the merge — this never touches the base branch directly). Gated on a real git
+// CI gate the merge - this never touches the base branch directly). Gated on a real git
 // checkout + a GitHub origin remote + a stored GITHUB_TOKEN; otherwise it no-ops with a note.
 const SESSION_TAG = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 13) // YYYYMMDD-hhmm
 type AutoPushStatus = {
@@ -115,7 +115,7 @@ function autoPushActive(): boolean {
 // Every AI's matched work lands on its OWN branch (tangos/<slug>-<session>) as one rolling PR,
 // even though the AIs share a single checkout. Files are attributed to whichever agent's match
 // first made them dirty; the shared tree and checked-out branch are never disturbed (the push
-// goes through a throwaway index — see pushSubsetToBranch).
+// goes through a throwaway index - see pushSubsetToBranch).
 const autoPushTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const autoPushBusy = new Set<string>()
 const claimedFiles = new Map<string, string>() // src path -> owning agent slug (first matcher wins)
@@ -176,11 +176,11 @@ async function runAutoPush(slug: string): Promise<void> {
     pushState()
   }
   try {
-    if (!(await isGitRepo(state.repoPath))) return set({ state: 'skipped', message: 'not a git checkout — clone the repo to enable pushing' })
+    if (!(await isGitRepo(state.repoPath))) return set({ state: 'skipped', message: 'not a git checkout - clone the repo to enable pushing' })
     const gh = await remoteSlug(state.repoPath)
     if (!gh) return set({ state: 'skipped', message: 'no GitHub "origin" remote to push to' })
     const token = secretsEnv().GITHUB_TOKEN || process.env.GITHUB_TOKEN
-    if (!token) return set({ state: 'skipped', message: 'no GITHUB_TOKEN — sign into GitHub in Settings' })
+    if (!token) return set({ state: 'skipped', message: 'no GITHUB_TOKEN - sign into GitHub in Settings' })
 
     set({ state: 'pushing', message: `${slug}: ${files.length} file(s)` })
     const branch = `tangos/${slug}-${SESSION_TAG}`
@@ -197,7 +197,7 @@ async function runAutoPush(slug: string): Promise<void> {
     if (!pushed.ok) {
       const denied = /denied|403|permission|not authorized|authentication|read-only/i.test(pushed.err)
       const hint = denied
-        ? ' — your GitHub token is read-only; sign out and back into GitHub in Settings to grant push access.'
+        ? ' - your GitHub token is read-only; sign out and back into GitHub in Settings to grant push access.'
         : ''
       return set({ state: 'error', message: `push failed: ${pushed.err.slice(-200)}${hint}` })
     }
@@ -208,7 +208,7 @@ async function runAutoPush(slug: string): Promise<void> {
       base,
       token,
       title: `tangos/${slug}: matched functions (${SESSION_TAG})`,
-      body: `Automated per-agent PR from tangOS Console — matched functions from **${slug}** this session. CI validation + your review gate the merge.`
+      body: `Automated per-agent PR from tangOS Console - matched functions from **${slug}** this session. CI validation + your review gate the merge.`
     })
     if (!pr.ok) return set({ state: 'error', message: `pushed, but PR failed: ${pr.error}`, prUrl: undefined })
     set({ state: 'ok', message: `${slug}: ${pr.created ? 'opened' : 'updated'} PR`, prUrl: pr.url })
@@ -390,7 +390,7 @@ const batchWaiters = new Set<BatchWaiter>()
 function notifyBatchWaiters(): void {
   for (const w of [...batchWaiters]) {
     const b = pullNextBatch(w.agentName)
-    if (!b) continue // not for this waiter (or already taken) — keep it parked
+    if (!b) continue // not for this waiter (or already taken) - keep it parked
     clearTimeout(w.timer)
     batchWaiters.delete(w)
     w.resolve(b)
@@ -513,7 +513,7 @@ function repoState(): RepoState {
     hasDescriptor: !!state.descriptor,
     validationErrors: state.validationErrors,
     // A ".git" entry (dir or file) means a real checkout. A "Download ZIP" snapshot has none:
-    // it can't commit/push and its tooling is likely stale — the renderer warns on this.
+    // it can't commit/push and its tooling is likely stale - the renderer warns on this.
     isGit: !!state.repoPath && existsSync(join(state.repoPath, '.git'))
   }
 }
@@ -539,26 +539,26 @@ function agentPrompt(): string {
   const toolIds = (state.descriptor?.tools ?? []).filter((t) => enabled.has(t.id)).map((t) => t.id)
   const shown = toolIds.slice(0, 12).join(', ') + (toolIds.length > 12 ? `, +${toolIds.length - 12} more` : '')
   const lines: (string | null)[] = [
-    `You are connecting to tangOS Console — a local bridge that exposes the ${title} toolchain to you as MCP tools, with a live viewer the human is watching in real time.`,
+    `You are connecting to tangOS Console - a local bridge that exposes the ${title} toolchain to you as MCP tools, with a live viewer the human is watching in real time.`,
     proj?.tagline ? `Project: ${proj.tagline}` : null,
     '',
-    'CONNECT — the endpoint is the same for everyone; only the way you register it differs by client. Add it as a Streamable HTTP MCP server:',
+    'CONNECT - the endpoint is the same for everyone; only the way you register it differs by client. Add it as a Streamable HTTP MCP server:',
     `  URL (Streamable HTTP):  ${url}`,
     `  - Claude Code:                       ${cliCommand(url)}`,
     `  - Cursor / Cline / Windsurf / Roo:   add to your mcp.json -> "mcpServers": { "tangos": { "url": "${url}" } }`,
     `  - Claude Desktop:                    "tangos": { "command": "npx", "args": ["-y", "mcp-remote", "${url}"] }`,
     '  - No native MCP (a browser chatbot like grok.com / chatgpt.com, or any client that cannot reach a local HTTP MCP): you CANNOT connect directly. Have the human run your calls, or from the tangOS console dir run:',
     '        npx tsx scripts/mcp-run.mts <calls.json> <your-name>',
-    '      where calls.json is e.g. [{"tool":"next_batch","args":{}}] — pass your name (grok, glm, ...) so the live viewer tags your runs.',
-    '  VERIFY you actually connected: call list_tools (or next_batch) and confirm a real tool result comes back. If nothing round-trips, you are NOT connected — do not report "connected" without a tool response, and check that the console shows your session under Connected agents.',
+    '      where calls.json is e.g. [{"tool":"next_batch","args":{}}] - pass your name (grok, glm, ...) so the live viewer tags your runs.',
+    '  VERIFY you actually connected: call list_tools (or next_batch) and confirm a real tool result comes back. If nothing round-trips, you are NOT connected - do not report "connected" without a tool response, and check that the console shows your session under Connected agents.',
     '',
     'THEN:',
-    '  1. Your first and ONLY action is to call next_batch. It BLOCKS server-side until a batch is ready (or ~45s) — so you do NOT wait, sleep, or heartbeat yourself; just call it and it parks until there is work. If it ever returns empty (a timeout), your entire next response is a single next_batch call to keep parking, nothing else. While idle do NOTHING else — no other tools, no reading files or notes, no "setting up" or picking your own targets. Self-assigning work on an empty queue is the #1 way to waste tokens here; do not do it.',
+    '  1. Your first and ONLY action is to call next_batch. It BLOCKS server-side until a batch is ready (or ~45s) - so you do NOT wait, sleep, or heartbeat yourself; just call it and it parks until there is work. If it ever returns empty (a timeout), your entire next response is a single next_batch call to keep parking, nothing else. While idle do NOTHING else - no other tools, no reading files or notes, no "setting up" or picking your own targets. Self-assigning work on an empty queue is the #1 way to waste tokens here; do not do it.',
     `  2. ONLY once next_batch hands you a real batch do you start using tools. It gives your role (if any), each target WITH a ready-to-run match call, this repo's KNOWN WALLS, and how to work them. Then drive the toolchain: ${shown}.`,
-    '  3. Respect required args: each tool lists its REQUIRED args (see list_tools or tangos.json tools[]) — e.g. match needs c, func, addr, size. Use the ready call next_batch gives you; never omit `c`.',
+    '  3. Respect required args: each tool lists its REQUIRED args (see list_tools or tangos.json tools[]) - e.g. match needs c, func, addr, size. Use the ready call next_batch gives you; never omit `c`.',
     '  4. On any tool error (-32602 / compile fail): read that tool\'s args in tangos.json, fix the call, and RETRY. Never end your turn on the first failed call.',
-    '  5. Every call streams into the human\'s live viewer tagged with your name — skip the narration and just work. If you hit a known wall, say so plainly and move on rather than grinding.',
-    '  6. Stay in your lane: edit source only for your assigned targets, and if an edit makes a function worse, revert it — never leave a tracked file regressed. Keep scratch files, notes, and reports in a temp dir, not in the repo or next to source.',
+    '  5. Every call streams into the human\'s live viewer tagged with your name - skip the narration and just work. If you hit a known wall, say so plainly and move on rather than grinding.',
+    '  6. Stay in your lane: edit source only for your assigned targets, and if an edit makes a function worse, revert it - never leave a tracked file regressed. Keep scratch files, notes, and reports in a temp dir, not in the repo or next to source.',
     proj?.readFirst ? `\nREAD FIRST: ${proj.readFirst}` : null
   ]
   return lines.filter((l) => l !== null).join('\n').trim()
@@ -833,7 +833,7 @@ ipcMain.handle('github:signin', async () => {
 })
 
 ipcMain.handle('atlas:current', () => {
-  // Whatever's already loaded (live preferred), else local — never fetches. For popouts.
+  // Whatever's already loaded (live preferred), else local - never fetches. For popouts.
   if (atlasCache.repo === state.repoPath) {
     if (atlasCache.live) return atlasCache.live
     if (atlasCache.local) return atlasCache.local
@@ -948,7 +948,7 @@ export const roleBatchSize = (role?: string): number =>
 // survey, or near-miss refine). Each target carries scaffolding metadata for the agent.
 async function genDraft(role: string | undefined, count: number): Promise<BatchDraft> {
   if (!state.repoPath || !state.descriptor) throw new Error('no repo loaded')
-  // Functions already handed out (in a still-open batch) — never generate these again so
+  // Functions already handed out (in a still-open batch) - never generate these again so
   // two AIs don't grind the same target and repeated Assigns don't return the same list.
   const taken = new Set(
     state.batches.filter((b) => b.status !== 'done').flatMap((b) => b.items.map((i) => i.ref))
@@ -1024,12 +1024,12 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     // machine this is almost always a setup problem) with a targeted hint, not a generic message.
     const out = (res.output || '').trim()
     const tail = out ? out.slice(-800) : '(the scheduler produced no output at all)'
-    // A scheduler that classified its pool and chose nothing is NOT a setup failure — it just has
+    // A scheduler that classified its pool and chose nothing is NOT a setup failure - it just has
     // no work for this role right now. Say that plainly instead of pointing at the ROM/deps.
     if (/nothing to (refine|match|do)|chose 0\b|0 refine-routable|no (routable|refinable|eligible|matchable)/i.test(out)) {
       const why =
         sched.id === 'refine_wl'
-          ? 'No near-misses are close enough to refine right now — the pool has candidates but none pass the current divergence threshold. Switch this AI to the "Main matcher" role for fresh functions, or come back once more near-misses land.'
+          ? 'No near-misses are close enough to refine right now - the pool has candidates but none pass the current divergence threshold. Switch this AI to the "Main matcher" role for fresh functions, or come back once more near-misses land.'
           : 'The scheduler found no eligible targets for this role right now. Try a different role, size, or module.'
       throw new Error(`No work for the "${role ?? 'selected'}" role right now.\n\n${why}\n\n--- scheduler output ---\n${tail}`)
     }
@@ -1039,9 +1039,9 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     else if (/extracted|FileNotFoundError|No such file|\.bin/i.test(out))
       hint = 'The ROM does not look extracted. Run the repo setup (tools/unpack.py on your own legally-dumped ROM) to create the extracted/ folder coddog reads.'
     else if (res.status === 'error' && !out)
-      hint = 'Could not run Python at all — check that `python` is installed and on PATH (the repo\'s runtime uses `python`).'
+      hint = 'Could not run Python at all - check that `python` is installed and on PATH (the repo\'s runtime uses `python`).'
     else hint = 'The scheduler ran but wrote nothing. Check the output below and that the repo is fully set up (deps + extracted ROM).'
-    throw new Error(`Batch scheduler (${sched.id}) produced no worklist — exit ${res.exitCode ?? '?'}.\n\n${hint}\n\n--- scheduler output ---\n${tail}`)
+    throw new Error(`Batch scheduler (${sched.id}) produced no worklist - exit ${res.exitCode ?? '?'}.\n\n${hint}\n\n--- scheduler output ---\n${tail}`)
   }
   const items: BatchItem[] = []
   for (const line of lines) {
@@ -1071,7 +1071,7 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
         label: sib ? `${sim}% like ${sib.name}` : undefined
       })
       // Sibling thunks (e.g. _ZThn80_*D0Ev) share a mangled name across addresses; one source
-      // matches them all, so never put the same name in a batch twice — it just looks like the
+      // matches them all, so never put the same name in a batch twice - it just looks like the
       // scheduler handed out the same target repeatedly.
       taken.add(r.name)
     } catch {
@@ -1087,7 +1087,7 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     if (droppedForClaims)
       throw new Error(
         `Every candidate this round is already claimed by other agents on the board (${droppedForClaims} skipped). ` +
-          'Nothing free to hand out right now — try again once they release, or switch role/module.'
+          'Nothing free to hand out right now - try again once they release, or switch role/module.'
       )
     throw new Error('scheduler returned no functions')
   }
@@ -1096,7 +1096,7 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     : ''
   const prompt =
     'Match these targets. Each was picked by opcode similarity to an already-matched sibling ' +
-    '(shown per target) — lean on that sibling as scaffolding. Run `match` on each; use `fdiff` on near-misses.' +
+    '(shown per target) - lean on that sibling as scaffolding. Run `match` on each; use `fdiff` on near-misses.' +
     coordNote
   const label = role && role !== 'Unassigned' ? role : 'Similarity'
   return { title: `${label} batch (${items.length})`, prompt, items } satisfies BatchDraft
@@ -1265,9 +1265,9 @@ async function driveBatch(agentName: string): Promise<void> {
   const env = secretsEnv()
   const driverEnv: Record<string, string> = {}
   if (agentName === 'GLM') {
-    if (!env.GLM_API_KEY) throw new Error('no GLM_API_KEY stored — add it in Settings')
+    if (!env.GLM_API_KEY) throw new Error('no GLM_API_KEY stored - add it in Settings')
   } else if (agentName === 'Claude') {
-    if (!env.ANTHROPIC_API_KEY) throw new Error('no ANTHROPIC_API_KEY stored — add it in Settings')
+    if (!env.ANTHROPIC_API_KEY) throw new Error('no ANTHROPIC_API_KEY stored - add it in Settings')
     driverEnv.GLM_API_KEY = env.ANTHROPIC_API_KEY // the driver reads GLM_API_KEY; point it at Anthropic
     driverEnv.GLM_BASE_URL = 'https://api.anthropic.com'
     driverEnv.GLM_MODEL = 'claude-sonnet-4-5'
@@ -1279,7 +1279,7 @@ async function driveBatch(agentName: string): Promise<void> {
   const effortDefault: Record<string, string> = { GLM: 'thinking', Claude: 'high' }
   driverEnv.TANGOS_EFFORT = agentEfforts[agentName] ?? effortDefault[agentName] ?? ''
   const batch = state.batches.find((b) => b.targetAgent === agentName && b.status !== 'done')
-  if (!batch) throw new Error(`no batch assigned to ${agentName} — assign one first`)
+  if (!batch) throw new Error(`no batch assigned to ${agentName} - assign one first`)
   const rows = batch.items
     .filter((i) => i.addr != null && i.size != null && i.module && i.targetHex)
     .map((i) =>
@@ -1418,7 +1418,7 @@ async function driveBatch(agentName: string): Promise<void> {
     // Land the matches into the repo. The driver only WRITES matching sources to a scratch
     // dir + the results file; without this step they never reach src/, the ledger, or git.
     // `crackloop land` banks the sources, runs the free-tier clone/paramclone post-pass, and
-    // linkcheck-gates everything banked. We deliberately stop BEFORE git commit/push — that
+    // linkcheck-gates everything banked. We deliberately stop BEFORE git commit/push - that
     // stays a manual, reviewable step (the console never pushes to the public repo on its own).
     if (state.autoLand && landed.length) {
       const landTool: TangosTool = {
@@ -1854,7 +1854,7 @@ ipcMain.handle('bug:submit', async (_e, payload: { description: string; screensh
 // ---- lifecycle ------------------------------------------------------------
 
 app.whenReady().then(() => {
-  Menu.setApplicationMenu(null) // no native File/Edit/View menu — we use our own chrome
+  Menu.setApplicationMenu(null) // no native File/Edit/View menu - we use our own chrome
   const saved = loadSettings()
   // migrate legacy single-role (string) entries to the multi-role (string[]) format
   agentRoles = Object.fromEntries(

@@ -101,7 +101,7 @@ export default function ModulePopout({ module }: { module: string }): JSX.Elemen
                   {sel.srcPath && <div><span className="k">source</span><span className="v mono">{sel.srcPath}</span></div>}
                   {(() => {
                     const c = claimFor(sel)
-                    return c ? <div><span className="k">claim</span><span className="v">{c.handle}{c.note ? ` — ${c.note}` : ''}</span></div> : null
+                    return c ? <div><span className="k">claim</span><span className="v">{c.handle}{c.note ? ` - ${c.note}` : ''}</span></div> : null
                   })()}
                 </div>
                 {!sel.matched && (

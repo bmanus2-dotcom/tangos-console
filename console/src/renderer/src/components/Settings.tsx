@@ -57,7 +57,7 @@ export default function Settings({
       </label>
       <p className="hint" style={{ margin: '2px 0 6px' }}>
         On (default) = when a drive finishes, its matches are banked into <code>src/</code>, the free-tier
-        clone pass runs, and every bank is link-checked — so a found match actually reaches your working tree.
+        clone pass runs, and every bank is link-checked - so a found match actually reaches your working tree.
         It stops before <code>git commit</code>; review and commit yourself. Off = matches stay in a scratch
         file for you to land by hand.
       </p>

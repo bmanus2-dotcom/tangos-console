@@ -128,7 +128,7 @@ export interface RepoState {
   isGit: boolean // false = not a git checkout (e.g. a "Download ZIP" snapshot): can't commit, tooling may be stale
 }
 
-/** Whether the local checkout is behind the remote — drives the "your local is out of date"
+/** Whether the local checkout is behind the remote - drives the "your local is out of date"
  *  banner and its one-click fast-forward Update. */
 export interface RepoUpdateStatus {
   isGit: boolean

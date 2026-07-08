@@ -96,7 +96,7 @@ export default function AtlasView({
           refreshClaims()
           return
         } catch {
-          /* offline — fall through */
+          /* offline - fall through */
         }
       }
       await load('local')
@@ -117,7 +117,7 @@ export default function AtlasView({
 
   // Only real contributors: at least one matched function attributed to them. This drops the
   // 0-count entries seeded from GitHub logins / PR authors (people with a commit but nothing
-  // merged into matched code yet) — they were showing as noise with a lock icon.
+  // merged into matched code yet) - they were showing as noise with a lock icon.
   const contributors = useMemo(
     () => [...loginCounts.entries()].filter(([, n]) => n >= 1).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     [loginCounts]
@@ -127,7 +127,7 @@ export default function AtlasView({
     const m = new Map<string, { s: number; e: number; handle: string; id: string; note?: string }[]>()
     for (const c of claims) {
       const arr = m.get(c.module) ?? []
-      // claim addrs arrive as "0x..." strings — Number() parses those (parseInt(,16) would stop at 'x')
+      // claim addrs arrive as "0x..." strings - Number() parses those (parseInt(,16) would stop at 'x')
       arr.push({ s: Number(c.start), e: Number(c.end), handle: c.handle, id: c.id, note: c.note })
       m.set(c.module, arr)
     }
@@ -380,7 +380,7 @@ export default function AtlasView({
               <span className="fn-size">{f.size}b</span>
               <span className="fn-claim">
                 {c && (
-                  <span className={`claim-chip ${c.handle === whoami.handle ? 'mine' : 'other'}`} title={`claimed by ${c.handle}${c.note ? ` — ${c.note}` : ''}`}>
+                  <span className={`claim-chip ${c.handle === whoami.handle ? 'mine' : 'other'}`} title={`claimed by ${c.handle}${c.note ? ` - ${c.note}` : ''}`}>
                     <Lock size={11} /> {c.handle === whoami.handle ? 'you' : c.handle}
                   </span>
                 )}
@@ -398,7 +398,7 @@ export default function AtlasView({
                   <button
                     className="bubble-btn"
                     disabled={claimedByOther}
-                    title={claimedByOther ? `claimed by ${c!.handle} — the AI will handle claiming` : 'Add to batch'}
+                    title={claimedByOther ? `claimed by ${c!.handle} - the AI will handle claiming` : 'Add to batch'}
                     onClick={() => { if (!claimedByOther) onAdd({ id: `${Date.now()}-${f.name}`, ref: f.name, label: f.module, module: f.module, addr: f.addr, size: f.size, srcPath: f.srcPath }) }}
                   >
                     <Plus size={14} strokeWidth={2.5} />

@@ -10,7 +10,7 @@ export function debugDir(): string {
   return join(app.getPath('documents'), 'tangos-debug')
 }
 
-// Runs INSIDE the renderer (injected as a string, so it's plain JS — not type-checked against the
+// Runs INSIDE the renderer (injected as a string, so it's plain JS - not type-checked against the
 // main process's non-DOM lib). Returns rects + computed styles for the UI elements we most often
 // chase visual bugs on: the console-inspector view, basically.
 const DOM_SNAPSHOT_JS = `(function () {

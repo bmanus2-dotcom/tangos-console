@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { randomPose } from '../tangoFrames'
 
-/** A brief tangOS "whoosh" — rising bubbles + wordmark + a random Tango — shown over an app switch. */
+/** A brief tangOS "whoosh" - rising bubbles + wordmark + a random Tango - shown over an app switch. */
 export default function Splash({ label }: { label?: string }): JSX.Element {
   // Fresh pose each mount, i.e. each swap (Splash remounts every switch).
   const pose = useMemo(() => randomPose(), [])

@@ -62,7 +62,7 @@ export default function BugReport({
             <Check size={30} className="bug-check" />
             <p>
               <b>Report ready.</b> The details are copied to your clipboard and the folder with your
-              screenshots is open — paste the report wherever you file bugs and drag the screenshots in.
+              screenshots is open - paste the report wherever you file bugs and drag the screenshots in.
             </p>
             <code className="bug-folder">{done.folder}</code>
             <button className="mini-btn go" onClick={onClose}>
@@ -72,7 +72,7 @@ export default function BugReport({
         ) : (
           <>
             <p className="hint" style={{ margin: '0 0 8px' }}>
-              What went wrong? We attach app version, OS, and recent activity{repoName ? ` in ${repoName}` : ''} —{' '}
+              What went wrong? We attach app version, OS, and recent activity{repoName ? ` in ${repoName}` : ''} -{' '}
               <b>no API keys</b>. Ctrl+V to paste a screenshot.
             </p>
             <textarea

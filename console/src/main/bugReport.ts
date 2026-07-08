@@ -35,7 +35,7 @@ export function writeBugReport(opts: {
   }
 
   const md =
-    `## Bug report — tangOS Console ${opts.appVersion}\n\n` +
+    `## Bug report - tangOS Console ${opts.appVersion}\n\n` +
     `${opts.description.trim() || '_(no description)_'}\n\n` +
     (shotNames.length
       ? `### Screenshots\n${shotNames.map((n) => `- ${n} (attach from the opened folder)`).join('\n')}\n\n`

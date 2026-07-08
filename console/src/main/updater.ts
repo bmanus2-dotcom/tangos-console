@@ -2,7 +2,7 @@ import { app, dialog, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 
 // Checks the public tangos-console GitHub Releases for a newer build, downloads it in the
-// background, and offers to restart into it (also installs on next quit). No-ops in dev — it only
+// background, and offers to restart into it (also installs on next quit). No-ops in dev - it only
 // works in a packaged install. Failures (offline, no releases yet) are swallowed quietly.
 export function initAutoUpdate(): void {
   if (!app.isPackaged) return
@@ -25,7 +25,7 @@ export function initAutoUpdate(): void {
   })
 
   autoUpdater.on('error', () => {
-    /* offline, rate-limited, or no releases published yet — ignore */
+    /* offline, rate-limited, or no releases published yet - ignore */
   })
 
   autoUpdater.checkForUpdates().catch(() => {})

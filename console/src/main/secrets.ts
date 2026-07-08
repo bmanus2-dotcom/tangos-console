@@ -2,7 +2,7 @@
 // HTTP API (e.g. an LLM refine step) instead of talking to tangOS over MCP.
 //
 // Keys are encrypted at rest with Electron's safeStorage, which is backed by the OS
-// keychain — on Windows that is DPAPI, tied to the logged-in user account. The raw
+// keychain - on Windows that is DPAPI, tied to the logged-in user account. The raw
 // value never leaves the main process: the renderer only ever sees the key NAME and a
 // last-4 hint. At tool-run time the decrypted values are merged into the child
 // process env, so a tool can read e.g. process.env.GLM_API_KEY exactly as it would
@@ -66,7 +66,7 @@ export function setSecret(name: string, value: string): void {
   }
   if (!value || !value.trim()) throw new Error('value is empty')
   if (!encryptionAvailable()) {
-    throw new Error('OS secure storage is unavailable — refusing to store an API key in plaintext')
+    throw new Error('OS secure storage is unavailable - refusing to store an API key in plaintext')
   }
   const s = load()
   s[name] = {

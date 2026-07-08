@@ -51,7 +51,7 @@ export default function GithubSignIn(): JSX.Element {
       <span className="gh-done" title="GITHUB_TOKEN stored in the vault">
         <Check size={13} style={{ verticalAlign: -2, marginRight: 4 }} />
         GitHub connected
-        <button className="gh-signout" onClick={signout} title="Sign out — remove the stored GitHub token">
+        <button className="gh-signout" onClick={signout} title="Sign out - remove the stored GitHub token">
           <LogOut size={12} />
           sign out
         </button>
@@ -91,7 +91,7 @@ export default function GithubSignIn(): JSX.Element {
                 Open GitHub
               </button>
             </div>
-            <span className="gh-code-wait">Waiting for you to approve — this closes itself once you are signed in.</span>
+            <span className="gh-code-wait">Waiting for you to approve - this closes itself once you are signed in.</span>
           </div>
         </div>
       )}

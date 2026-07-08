@@ -49,12 +49,12 @@ function renderCmd(cmd: string): (string | JSX.Element)[] {
 }
 
 function recommend(bySize?: AiAgent['stats']['bySize']): string {
-  if (!bySize) return 'Not enough data yet — assign it some work.'
+  if (!bySize) return 'Not enough data yet - assign it some work.'
   const rows = Object.entries(bySize)
     .filter(([, t]) => t.attempts >= 2)
     .map(([b, t]) => ({ b, r: t.matches / t.attempts }))
     .sort((a, b) => b.r - a.r)
-  if (!rows.length) return 'Not enough data yet — assign it some work.'
+  if (!rows.length) return 'Not enough data yet - assign it some work.'
   const best = rows[0]
   const worst = rows[rows.length - 1]
   let s = `Strongest on ${best.b} (${Math.round(best.r * 100)}% hit)`
@@ -109,7 +109,7 @@ export default function AiDetail({
         <div className="aid-rec">
           <span className="aid-rec-label">{rec.role ? 'Best as' : 'Role'}</span>
           <b>{rec.role ?? 'not sure yet'}</b>
-          <span className="aid-rec-why">— {rec.why}</span>
+          <span className="aid-rec-why">- {rec.why}</span>
         </div>
 
         <div className="aid-grid">
@@ -118,7 +118,7 @@ export default function AiDetail({
             <span>matches</span>
           </div>
           <div className="aid-stat">
-            <b>{s.matchAttempts ? Math.round(s.hitRate * 100) : '—'}%</b>
+            <b>{s.matchAttempts ? Math.round(s.hitRate * 100) : '-'}%</b>
             <span>hit rate</span>
           </div>
           <div className="aid-stat">
@@ -170,7 +170,7 @@ export default function AiDetail({
           <>
             <div className="section-title">
               <span className="status-dot running" style={{ verticalAlign: -1, marginRight: 6 }} />
-              Live — {running.label}
+              Live - {running.label}
             </div>
             <pre className="aid-live aero-scroll" ref={(el) => el && (el.scrollTop = el.scrollHeight)}>
               {running.output || '(starting…)'}

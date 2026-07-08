@@ -35,7 +35,7 @@ function Field({ arg, value, onChange }: { arg: TangosArg; value: unknown; onCha
         <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
         <label>
           {arg.name}
-          {arg.description ? <span className="desc"> — {arg.description}</span> : null}
+          {arg.description ? <span className="desc"> - {arg.description}</span> : null}
         </label>
       </div>
     )
@@ -45,7 +45,7 @@ function Field({ arg, value, onChange }: { arg: TangosArg; value: unknown; onCha
       <div className="field">
         <label>{arg.name}{arg.required ? ' *' : ''}</label>
         <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
-          <option value="">—</option>
+          <option value="">-</option>
           {arg.choices.map((c) => (
             <option key={String(c)} value={String(c)}>{String(c)}</option>
           ))}
@@ -121,7 +121,7 @@ export default function RunDock({
               <input type="checkbox" checked={apply} onChange={(e) => setApply(e.target.checked)} />
               <label>
                 <ShieldAlert size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--aero-danger)' }} />
-                apply — actually mutate ({tool.apply}). Off = dry run.
+                apply - actually mutate ({tool.apply}). Off = dry run.
               </label>
             </div>
           )}

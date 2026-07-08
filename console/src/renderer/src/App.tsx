@@ -163,7 +163,7 @@ export default function App(): JSX.Element {
   function applyActivity(ev: ActivityEvent): void {
     setRuns((prev) => {
       if (ev.kind === 'run-started') {
-        // Keep the list bounded — a long scan is hundreds of runs, and every output chunk
+        // Keep the list bounded - a long scan is hundreds of runs, and every output chunk
         // maps this array, so an unbounded list turns each chunk into quadratic work.
         const next = prev.length >= MAX_RUNS ? prev.slice(prev.length - MAX_RUNS + 1) : prev
         return [...next, ev.run]
@@ -325,7 +325,7 @@ export default function App(): JSX.Element {
               <button
                 className={`tb-btn icononly ${settingsOpen ? 'active' : ''}`}
                 onClick={() => setSettingsOpen((o) => !o)}
-                title="Settings — keys, theme, repo"
+                title="Settings - keys, theme, repo"
               >
                 <Settings2 size={15} />
               </button>

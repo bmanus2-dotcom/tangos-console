@@ -102,7 +102,7 @@ function describeTool(tool: TangosTool): string {
 }
 
 /** Build a ready-to-run `match` call for a batch target so the agent never has to guess
- *  (and never omits the required `c` arg — the failure that stalled the first batch). */
+ *  (and never omits the required `c` arg - the failure that stalled the first batch). */
 function verifyCallFor(item: BatchItem, descriptor: TangosDescriptor): string | null {
   const match = descriptor.tools?.find((t) => t.id === 'match')
   if (!match) return null
@@ -135,7 +135,7 @@ function verifyCallFor(item: BatchItem, descriptor: TangosDescriptor): string | 
 
 // Cap the text handed back to the AI so a single verbose tool (falign/fdiff on a
 // multi-KB function can dump 50-70 KB) can't flood its context. The human still sees
-// the FULL output in the live viewer — this only trims the MCP response. Head + tail
+// the FULL output in the live viewer - this only trims the MCP response. Head + tail
 // keep the summary and the final verdict; the middle (the long aligned diff) is cut.
 const MAX_TOOL_OUTPUT = 9000
 function capOutput(s: string): string {
@@ -143,7 +143,7 @@ function capOutput(s: string): string {
   const head = s.slice(0, 6400)
   const tail = s.slice(-1800)
   const cut = s.length - head.length - tail.length
-  return `${head}\n\n...[${cut} chars trimmed to save context — full output is in the human's live viewer. Narrow addr/size, or use --brief/--quiet.]...\n\n${tail}`
+  return `${head}\n\n...[${cut} chars trimmed to save context - full output is in the human's live viewer. Narrow addr/size, or use --brief/--quiet.]...\n\n${tail}`
 }
 
 function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClient | undefined): McpServer {
@@ -166,7 +166,7 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
     const api = ctx.batchApi
     server.tool(
       'next_batch',
-      'Pull the next batch of work from the tangOS Console. Returns your role instructions (if designated) plus the batch prompt and its target functions, and marks it active. This call BLOCKS server-side until a batch is ready (or ~45s), so just call it once and it parks until there is work — no polling loop, no waiting on your side.',
+      'Pull the next batch of work from the tangOS Console. Returns your role instructions (if designated) plus the batch prompt and its target functions, and marks it active. This call BLOCKS server-side until a batch is ready (or ~45s), so just call it once and it parks until there is work - no polling loop, no waiting on your side.',
       {},
       async () => {
         const idle = getClient()
@@ -182,8 +182,8 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
           const IDLE_CAP = 8
           const text =
             n >= IDLE_CAP
-              ? `[tangos] still no work after ${n} waits (~${Math.round((n * 45) / 60)} min idle). STOP — hand back to the human with one short line, e.g. "queue empty, standing by — re-engage me when there's work."`
-              : `[tangos] no work yet (waited 45s, empty ${n}/${IDLE_CAP}). Call next_batch again — it BLOCKS until a batch arrives, so it costs no thinking. Your ENTIRE next response is a single next_batch call: no heartbeat, no analysis, no other tools, no self-assigned targets.`
+              ? `[tangos] still no work after ${n} waits (~${Math.round((n * 45) / 60)} min idle). STOP - hand back to the human with one short line, e.g. "queue empty, standing by - re-engage me when there's work."`
+              : `[tangos] no work yet (waited 45s, empty ${n}/${IDLE_CAP}). Call next_batch again - it BLOCKS until a batch arrives, so it costs no thinking. Your ENTIRE next response is a single next_batch call: no heartbeat, no analysis, no other tools, no self-assigned targets.`
           return { content: [{ type: 'text' as const, text }] }
         }
         if (idle) idle.emptyPolls = 0
@@ -209,21 +209,21 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
         // How to actually run the work without stalling on the first tool error.
         const guide = hasMatch
           ? '\n\nHOW TO WORK EACH TARGET (never end a turn on a failed call):\n' +
-            '1. Every target has a ready `match` call above (required args: c, func, addr, size). Use it verbatim — never omit `c`.\n' +
-            '2. BEFORE any match/fdiff/falign on a target, make sure its `c` candidate file EXISTS. If it does not, CREATE the draft first from `worklist --addr <addr> --pretty` (or disasm / chaos-db.json). Never diff a file you have not created — that is the #1 avoidable error (FileNotFoundError).\n' +
-            '3. On ANY tool error — validation (-32602), compile failure, OR missing-file/FileNotFoundError — diagnose and RETRY in the SAME turn (check tangos.json tools[] for required args if unsure). A turn may only end on a successful call or an explicit "blocked because X" hand-off sentence — never right after a failed call.\n' +
-            '4. For first-pass triage use `fdiff` with `"quiet": true` (returns just `mismatches=N/total`) — do NOT lean on match\'s full byte dump or `brief` to triage. Pull the full diff only once you are fixing a specific block. `falign` handles size-mismatched candidates but is EXPENSIVE on large functions — pass `"quiet": true` or `"limit": 1` and fix the earliest diverging block first.\n' +
-            '5. Overlay (ov*) targets: keep the `module` in the ready call — it auto-loads the overlay binary, so you do NOT need bin/base. (If overlay bytes read back empty/0, your repo is a stale ZIP snapshot — use a fresh `git clone`.) Run heavy tools one at a time; pass `"brief": true` for large functions.\n' +
+            '1. Every target has a ready `match` call above (required args: c, func, addr, size). Use it verbatim - never omit `c`.\n' +
+            '2. BEFORE any match/fdiff/falign on a target, make sure its `c` candidate file EXISTS. If it does not, CREATE the draft first from `worklist --addr <addr> --pretty` (or disasm / chaos-db.json). Never diff a file you have not created - that is the #1 avoidable error (FileNotFoundError).\n' +
+            '3. On ANY tool error - validation (-32602), compile failure, OR missing-file/FileNotFoundError - diagnose and RETRY in the SAME turn (check tangos.json tools[] for required args if unsure). A turn may only end on a successful call or an explicit "blocked because X" hand-off sentence - never right after a failed call.\n' +
+            '4. For first-pass triage use `fdiff` with `"quiet": true` (returns just `mismatches=N/total`) - do NOT lean on match\'s full byte dump or `brief` to triage. Pull the full diff only once you are fixing a specific block. `falign` handles size-mismatched candidates but is EXPENSIVE on large functions - pass `"quiet": true` or `"limit": 1` and fix the earliest diverging block first.\n' +
+            '5. Overlay (ov*) targets: keep the `module` in the ready call - it auto-loads the overlay binary, so you do NOT need bin/base. (If overlay bytes read back empty/0, your repo is a stale ZIP snapshot - use a fresh `git clone`.) Run heavy tools one at a time; pass `"brief": true` for large functions.\n' +
             '6. End EVERY working turn with a one-line status: what you just did, the current best divergence, and the single next action. Never end a turn silently after a tool result.\n' +
-            '7. When these targets are done, call `next_batch` for more. It BLOCKS until there is work (or ~45s), so just call it — no waiting, sleeping, or heartbeat loop on your side. If it returns empty (a timeout), your entire response is one more next_batch call to keep parking — no worklist, coddog, notes, or self-assigned targets. After several empty waits it tells you to hand back.\n' +
-            '8. Coordinate (best-effort): try `claims_check` / `claims_lock` (module/start/end) to reserve a span and `claims_release` when banked. If claims return 401 / "missing key", claims just are not configured here — note it once and PROCEED; do not retry or stall. Your batch is already yours (the console hands each agent a distinct set), so an unclaimed target is fine to work.\n' +
-            '9. Stay in your lane: edit source ONLY for the targets above. If an edit regresses a function (worse diff or bigger size), REVERT it — never leave a tracked source file worse than you found it. Keep scratch files, notes, and session reports in a temp/scratch dir, NEVER inside the repo or beside source files.\n' +
+            '7. When these targets are done, call `next_batch` for more. It BLOCKS until there is work (or ~45s), so just call it - no waiting, sleeping, or heartbeat loop on your side. If it returns empty (a timeout), your entire response is one more next_batch call to keep parking - no worklist, coddog, notes, or self-assigned targets. After several empty waits it tells you to hand back.\n' +
+            '8. Coordinate (best-effort): try `claims_check` / `claims_lock` (module/start/end) to reserve a span and `claims_release` when banked. If claims return 401 / "missing key", claims just are not configured here - note it once and PROCEED; do not retry or stall. Your batch is already yours (the console hands each agent a distinct set), so an unclaimed target is fine to work.\n' +
+            '9. Stay in your lane: edit source ONLY for the targets above. If an edit regresses a function (worse diff or bigger size), REVERT it - never leave a tracked source file worse than you found it. Keep scratch files, notes, and session reports in a temp/scratch dir, NEVER inside the repo or beside source files.\n' +
             'Fallback if native MCP tools are unavailable in your client: run `npx tsx scripts/mcp-run.mts <calls.json> <your-name>` (e.g. grok) from the tangOS console dir, where calls.json is [{"tool":"match","args":{...}}]. Pass your name so the live viewer tags your runs correctly (omitting it shows "agent").'
           : ''
 
         const walls = desc.project?.knownWalls
         const wallsNote = walls
-          ? `\n\n[known walls — verify your near-miss IS one, then say so and move on; do not grind or give up blanket]\n${walls}`
+          ? `\n\n[known walls - verify your near-miss IS one, then say so and move on; do not grind or give up blanket]\n${walls}`
           : ''
         return {
           content: [
@@ -258,7 +258,7 @@ export class McpManager {
   private lastSeen = new Map<string, number>() // sessionId -> last request time, for evicting ghosts
   private staleTimer: ReturnType<typeof setInterval> | null = null
   private _port: number | null = null
-  // Raw endpoint traffic — lets the human tell "nothing ever hit us" (client never
+  // Raw endpoint traffic - lets the human tell "nothing ever hit us" (client never
   // reached the server) from "reached but the MCP handshake failed" (requests > 0,
   // clients still 0). The exact situation when an agent claims it connected but the
   // roster stays empty.
@@ -313,7 +313,7 @@ export class McpManager {
     if (id) this.lastSeen.set(id, Date.now())
   }
 
-  // Evict sessions that have gone silent — an agent that dropped without a clean
+  // Evict sessions that have gone silent - an agent that dropped without a clean
   // DELETE (script process.exit, editor session drop) leaves a ghost otherwise.
   private evictStale(): void {
     const STALE_MS = 90_000
@@ -351,7 +351,7 @@ export class McpManager {
         transport = this.transports.get(sessionId)
         this.touch(sessionId)
       } else if (!sessionId && isInitializeRequest(req.body)) {
-        // Name the client from the initialize request itself — a client that completes
+        // Name the client from the initialize request itself - a client that completes
         // `initialize` but never sends the `notifications/initialized` follow-up would
         // otherwise stay stuck on "connecting…". oninitialized still refines it later.
         const initName = normalizeName(

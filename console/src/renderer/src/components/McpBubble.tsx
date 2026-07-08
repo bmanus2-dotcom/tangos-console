@@ -95,7 +95,7 @@ export default function McpBubble({
           {(mcp?.connectedClients ?? 0) === 0 && (mcp?.requestsSeen ?? 0) > 0 && (
             <p className="notice warn" style={{ marginTop: 6 }}>
               Something reached the endpoint but no MCP session formed. That client probably
-              can&apos;t speak Streamable HTTP MCP (browser chatbots can&apos;t) — use the mcp-run
+              can&apos;t speak Streamable HTTP MCP (browser chatbots can&apos;t) - use the mcp-run
               fallback in the prompt below.
             </p>
           )}

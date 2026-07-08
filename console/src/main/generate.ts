@@ -100,7 +100,7 @@ export function detectRepo(repoPath: string): GenerateReport {
   }
 
   if (tools.length === 0) {
-    notes.push('no canonical entry points auto-detected — refine this descriptor by hand or with AI.')
+    notes.push('no canonical entry points auto-detected - refine this descriptor by hand or with AI.')
   }
 
   const descriptor: TangosDescriptor = {

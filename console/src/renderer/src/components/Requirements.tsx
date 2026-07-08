@@ -45,7 +45,7 @@ export default function Requirements({
         <span className="req-ico" style={{ background: 'rgb(var(--aero-matched-rgb))' }}>
           <Check size={11} strokeWidth={3} />
         </span>
-        <span className="req-compact-text">Requirements — all set</span>
+        <span className="req-compact-text">Requirements - all set</span>
         <ChevronDown size={13} style={{ opacity: 0.5 }} />
       </button>
     )

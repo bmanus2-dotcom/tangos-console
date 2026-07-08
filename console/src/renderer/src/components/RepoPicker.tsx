@@ -4,7 +4,7 @@ import type { RepoState } from '../../../shared/types'
 
 const EXAMPLE = {
   title: 'sm64ds-decomp',
-  desc: 'The reference repo — ships a hand-authored tangos.json exposing its full toolchain. (Running it still needs mwccarm + your own ROM.)',
+  desc: 'The reference repo - ships a hand-authored tangos.json exposing its full toolchain. (Running it still needs mwccarm + your own ROM.)',
   github: 'https://github.com/bmanus2-dotcom/sm64ds-decomp'
 }
 
@@ -39,7 +39,7 @@ export default function RepoPicker({ onChanged }: { onChanged: (r: RepoState) =>
       <h1>Point it at a decomp repo</h1>
       <p className="tagline">
         Paste a GitHub repo to clone it, or choose a folder you already have. tangOS reads its{' '}
-        <code>tangos.json</code> and exposes the repo&apos;s tools as an MCP server an AI can drive — live.
+        <code>tangos.json</code> and exposes the repo&apos;s tools as an MCP server an AI can drive - live.
       </p>
 
       <div className="repo-entry">
@@ -84,7 +84,7 @@ export default function RepoPicker({ onChanged }: { onChanged: (r: RepoState) =>
         </div>
       </div>
       <p className="notice">
-        No <code>tangos.json</code> in your repo yet? Open the folder anyway — tangOS will offer to generate one.
+        No <code>tangos.json</code> in your repo yet? Open the folder anyway - tangOS will offer to generate one.
       </p>
     </div>
   )

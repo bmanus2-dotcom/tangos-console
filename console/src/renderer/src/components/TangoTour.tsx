@@ -26,14 +26,14 @@ const STEPS: Step[] = [
   },
   {
     target: '[data-tour="mcp"]',
-    title: 'Step 1 — turn on MCP',
+    title: 'Step 1 - turn on MCP',
     body: 'Switch this ON so AIs can connect. Then paste the prompt it gives you into your AI (Claude Code, Cursor, and friends).',
     emotion: 'smile'
   },
   {
     target: '[data-tour="settings"]',
-    title: 'Step 2 — keys & GitHub',
-    body: "Or add an LLM API key here and sign into GitHub. A keyed provider shows up ready to run — no connecting needed.",
+    title: 'Step 2 - keys & GitHub',
+    body: "Or add an LLM API key here and sign into GitHub. A keyed provider shows up ready to run - no connecting needed.",
     emotion: 'thinking'
   },
   {
@@ -44,8 +44,8 @@ const STEPS: Step[] = [
   },
   {
     target: '[data-tour="controller"]',
-    title: 'Step 3 — your first batch',
-    body: "Hit “Assign 16” on a box to hand it 16 similar functions. For an API AI, then click “Drive”. Watch it match live — that's it!",
+    title: 'Step 3 - your first batch',
+    body: "Hit “Assign 16” on a box to hand it 16 similar functions. For an API AI, then click “Drive”. Watch it match live - that's it!",
     emotion: 'tongue'
   },
   {
@@ -56,7 +56,7 @@ const STEPS: Step[] = [
   },
   {
     title: "You're all set!",
-    body: "I'll hang out in the corner. Click me any time for tips — and I'll wave when there's something new.",
+    body: "I'll hang out in the corner. Click me any time for tips - and I'll wave when there's something new.",
     emotion: 'handsup'
   }
 ]

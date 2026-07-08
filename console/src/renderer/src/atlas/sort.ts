@@ -6,7 +6,7 @@ export const SORT_LABELS: Record<SortKey, string> = {
   unmatched: 'unmatched first',
   'size-desc': 'size (largest)',
   'size-asc': 'size (smallest)',
-  name: 'name (A–Z)',
+  name: 'name (A-Z)',
   addr: 'address',
   module: 'module'
 }

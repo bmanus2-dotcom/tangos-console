@@ -48,7 +48,7 @@ class ActivityBus extends EventEmitter {
     }
   }
 
-  /** Snapshot of known runs, oldest-first — used to hydrate a freshly opened viewer. */
+  /** Snapshot of known runs, oldest-first - used to hydrate a freshly opened viewer. */
   snapshot(): ActivityRun[] {
     return this.order.map((id) => this.runs.get(id)).filter((r): r is ActivityRun => !!r)
   }

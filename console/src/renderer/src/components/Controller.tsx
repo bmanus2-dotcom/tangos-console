@@ -8,7 +8,7 @@ import { effortSpec, currentEffort } from '../efforts'
 import GithubSignIn from './GithubSignIn'
 
 
-/** Ticks mm:ss from mount — shows the batch generator is working, not frozen. */
+/** Ticks mm:ss from mount - shows the batch generator is working, not frozen. */
 function Elapsed(): JSX.Element {
   const [s, setS] = useState(0)
   useEffect(() => {
@@ -80,7 +80,7 @@ export default function Controller({
   const [notice, setNotice] = useState<string | null>(null) // gentle info toast (e.g. "no work for this role")
 
   // Latest run per agent in a single pass (instead of filter+sort over all runs per agent on
-  // every output chunk — that was quadratic during a long scan and made the view lag/drop).
+  // every output chunk - that was quadratic during a long scan and made the view lag/drop).
   const latestByName = useMemo(() => {
     const m = new Map<string, ActivityRun>()
     for (const r of runs) {
@@ -120,7 +120,7 @@ export default function Controller({
       // Strip Electron's "Error invoking remote method 'ai:assign': Error:" IPC wrapper.
       const msg = String((e as Error).message ?? e).replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, '')
       if (/^No work /i.test(msg)) {
-        // Not a failure — just nothing to do for this role. Show a calm, dismissable notice.
+        // Not a failure - just nothing to do for this role. Show a calm, dismissable notice.
         setNotice(msg.split('--- scheduler output ---')[0].trim())
         window.setTimeout(() => setNotice(null), 7000)
       } else {
@@ -165,7 +165,7 @@ export default function Controller({
 
       {agents.length === 0 ? (
         <div className="empty-feed">
-          No AIs yet. Start the MCP server and connect an agent, or add an LLM API key in Settings —
+          No AIs yet. Start the MCP server and connect an agent, or add an LLM API key in Settings -
           each one gets a box here you can assign work to and watch live.
         </div>
       ) : (
@@ -175,7 +175,7 @@ export default function Controller({
             const col = aiColor(a.name)
             const pct = total ? Math.round((done / total) * 100) : 0
             const hit = a.stats.matchAttempts ? Math.round(a.stats.hitRate * 100) : null
-            // API providers are always available (we hold the key) — never grayed offline.
+            // API providers are always available (we hold the key) - never grayed offline.
             const available = a.kind === 'api' || a.connected
             const state = live ? 'live' : available ? 'idle' : 'off'
             const isLooping = looping.includes(a.name)
@@ -198,7 +198,7 @@ export default function Controller({
                     <span className="aib-loadtext">
                       Generating batch… <Elapsed />
                     </span>
-                    <span className="aib-loadsub">ranking targets by similarity — up to a minute on a cold start</span>
+                    <span className="aib-loadsub">ranking targets by similarity - up to a minute on a cold start</span>
                     <span className="aib-loadbar" />
                   </div>
                 )}
@@ -240,7 +240,7 @@ export default function Controller({
                       {liveLine && <span className={`aib-live mono${live ? '' : ' done'}`}>▸ {liveLine}</span>}
                     </>
                   ) : (
-                    <span className="aib-idle">{available ? 'idle — ready to assign' : 'offline'}</span>
+                    <span className="aib-idle">{available ? 'idle - ready to assign' : 'offline'}</span>
                   )}
                 </div>
 
@@ -289,7 +289,7 @@ export default function Controller({
                           className="agent-effort"
                           value={currentEffort(a)}
                           onChange={(e) => window.tangos.setClientEffort(a.name, e.target.value)}
-                          title={`Reasoning effort${spec.note ? ` — ${spec.note}` : ''}`}
+                          title={`Reasoning effort${spec.note ? ` - ${spec.note}` : ''}`}
                         >
                           {spec.options.map((o) => (
                             <option key={o} value={o}>
@@ -309,7 +309,7 @@ export default function Controller({
                       value={loopSel || rawSize == null ? '' : rawSize}
                       placeholder={loopSel ? '∞' : '16'}
                       disabled={loopSel}
-                      title={loopSel ? 'Running continuously (∞)' : 'Batch size — leave empty for the recommended 16, max 200'}
+                      title={loopSel ? 'Running continuously (∞)' : 'Batch size - leave empty for the recommended 16, max 200'}
                       onChange={(e) => {
                         const v = e.target.value.trim()
                         setSizes((s) => {
@@ -322,7 +322,7 @@ export default function Controller({
                     />
                     <button
                       className={`aib-loop${loopSel ? ' on' : ''}`}
-                      title={loopSel ? 'Stop looping — run a single batch' : 'Run continuously: keep pulling recommended-size batches until stopped'}
+                      title={loopSel ? 'Stop looping - run a single batch' : 'Run continuously: keep pulling recommended-size batches until stopped'}
                       onClick={() =>
                         setSizes((s) => {
                           const next = { ...s }
@@ -341,7 +341,7 @@ export default function Controller({
                       <button
                         className="mini-btn stop"
                         onClick={() => window.tangos.stopAi(a.name)}
-                        title={driving ? 'Stop this run early — keeps the matches found so far and prints results' : 'Stop the continuous loop'}
+                        title={driving ? 'Stop this run early - keeps the matches found so far and prints results' : 'Stop the continuous loop'}
                       >
                         <Square size={12} /> Stop
                       </button>

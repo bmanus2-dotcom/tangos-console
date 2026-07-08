@@ -2,7 +2,7 @@
 
 A unified brand and toolkit for reverse-engineering / decompilation projects.
 
-Everything reads **one file per repo** — `tangos.json` — a descriptor that normalizes any
+Everything reads **one file per repo** - `tangos.json` - a descriptor that normalizes any
 decomp repo (whatever its layout) into a single vocabulary. Point a tangOS app at a repo, and
 it knows the repo's tools, compiler, data source, and rules.
 

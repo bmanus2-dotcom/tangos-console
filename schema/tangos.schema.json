@@ -101,7 +101,7 @@
         "id": { "type": "string", "description": "Unique, MCP-tool-safe id (snake_case). Becomes the exposed tool name.", "pattern": "^[a-z0-9_]+$" },
         "label": { "type": "string", "description": "Short human label." },
         "category": { "type": "string", "description": "Grouping key (see categories[])." },
-        "description": { "type": "string", "description": "What the tool does — shown to the AI and in Docs." },
+        "description": { "type": "string", "description": "What the tool does - shown to the AI and in Docs." },
         "docs": { "type": "string", "description": "Longer usage notes / examples (markdown allowed)." },
         "readOnly": { "type": "boolean", "description": "True if the tool only reads/reports and never mutates repo state (writes src/, commits, appends ledgers, hits mutating APIs). Drives the safety UI." },
         "command": {

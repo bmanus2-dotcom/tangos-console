@@ -2,7 +2,7 @@
   "name": "tangos",
   "version": "0.1.0",
   "private": true,
-  "description": "tangOS — a unified brand for a decomp toolchain: Console (MCP + live viewer .exe), Docs (tool catalog), Atlas (progress viewer). Every app reads one per-repo descriptor: tangos.json.",
+  "description": "tangOS - a unified brand for a decomp toolchain: Console (MCP + live viewer .exe), Docs (tool catalog), Atlas (progress viewer). Every app reads one per-repo descriptor: tangos.json.",
   "workspaces": [
     "packages/*",
     "console"
