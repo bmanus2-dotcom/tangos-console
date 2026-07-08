@@ -17,7 +17,7 @@ if errorlevel 1 (
 
 rem First run: install workspace deps from the repo root (deps hoist to the root node_modules).
 if not exist "%~dp0node_modules\electron-vite" if not exist "%~dp0console\node_modules\electron-vite" (
-  echo Installing dependencies (first run, one time)...
+  echo Installing dependencies ^(first run, one time^)...
   pushd "%~dp0"
   call npm install
   popd
