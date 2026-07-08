@@ -1,5 +1,6 @@
 import './appName' // MUST be first: renames the data folder + migrates it before anything reads userData
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard, globalShortcut } from 'electron'
+import { dumpDebug, debugDir } from './debug'
 import { join, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -778,6 +779,7 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  if (!app.isPackaged) mainWindow.webContents.openDevTools({ mode: 'detach' }) // dev build: DevTools open
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -1546,6 +1548,11 @@ ipcMain.handle('tips:open', () => {
   return true
 })
 ipcMain.handle('app:version', () => app.getVersion())
+ipcMain.handle('debug:dump', () => dumpDebug(mainWindow, fullState(), activityBus.snapshot()))
+ipcMain.handle('debug:open', async () => {
+  await shell.openPath(debugDir())
+  return debugDir()
+})
 ipcMain.handle('tour:get', () => readTour())
 ipcMain.handle('tour:open', () => {
   openTour()
@@ -1789,6 +1796,14 @@ app.whenReady().then(() => {
   if (saved.lastRepo && looksLikeRepo(saved.lastRepo)) setRepo(saved.lastRepo)
   createWindow()
   initAutoUpdate() // check the public releases feed for a newer build
+  // Debug hotkeys: Ctrl+Shift+D writes a snapshot (screenshot + state + dom) to the debug folder;
+  // Ctrl+Shift+I toggles DevTools. Available in every build so bugs can be captured anywhere.
+  globalShortcut.register('CommandOrControl+Shift+D', () => {
+    void dumpDebug(mainWindow, fullState(), activityBus.snapshot())
+  })
+  globalShortcut.register('CommandOrControl+Shift+I', () => {
+    mainWindow?.webContents.toggleDevTools()
+  })
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

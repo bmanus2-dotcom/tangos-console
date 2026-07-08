@@ -87,6 +87,8 @@ const api = {
   getTips: (): Promise<{ title: string; body: string }[]> => ipcRenderer.invoke('tips:get'),
   openTips: (): Promise<boolean> => ipcRenderer.invoke('tips:open'),
   appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
+  dumpDebug: (): Promise<string> => ipcRenderer.invoke('debug:dump'),
+  openDebug: (): Promise<string> => ipcRenderer.invoke('debug:open'),
   getTour: (): Promise<{ target?: string; title: string; body: string; emotion: string }[]> =>
     ipcRenderer.invoke('tour:get'),
   openTour: (): Promise<boolean> => ipcRenderer.invoke('tour:open'),

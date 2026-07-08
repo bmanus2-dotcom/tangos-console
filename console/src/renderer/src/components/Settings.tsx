@@ -1,4 +1,4 @@
-import { FolderOpen } from 'lucide-react'
+import { FolderOpen, Bug } from 'lucide-react'
 import type { RepoState } from '../../../shared/types'
 import KeyVault from './KeyVault'
 
@@ -86,6 +86,22 @@ export default function Settings({
           Open reports folder
         </button>
       )}
+
+      <div className="section-title" style={{ marginTop: 14 }}>Debug snapshot</div>
+      <p className="hint" style={{ margin: '2px 0 6px' }}>
+        Saves a screenshot + full app state + the rendered layout to a folder, for diagnosing visual and
+        state bugs. Shortcut: <code>Ctrl+Shift+D</code>. (<code>Ctrl+Shift+I</code> toggles DevTools.)
+      </p>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button className="mini-btn go" onClick={() => window.tangos.dumpDebug()}>
+          <Bug size={12} style={{ verticalAlign: -2, marginRight: 4 }} />
+          Save snapshot
+        </button>
+        <button className="mini-btn" onClick={() => window.tangos.openDebug()}>
+          <FolderOpen size={12} style={{ verticalAlign: -2, marginRight: 4 }} />
+          Open debug folder
+        </button>
+      </div>
 
       <div className="section-title" style={{ marginTop: 14 }}>API keys</div>
       <KeyVault />
