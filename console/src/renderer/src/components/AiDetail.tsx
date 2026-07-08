@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { X, FolderOpen } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { X, FolderOpen, ChevronRight } from 'lucide-react'
 import type { AiAgent, ActivityRun } from '../../../shared/types'
 import { aiColor } from '../aiColor'
 import { recommendRole } from '../roleRec'
@@ -87,6 +87,11 @@ export default function AiDetail({
   const s = agent.stats
   const rec = recommendRole(agent)
   const running = mine.find((r) => r.status === 'running')
+  // Fall back to the most recent run so the live pane PERSISTS between an MCP agent's tool calls.
+  // Each call finishes in a flash and the agent then thinks, so keying only on 'running' means the
+  // pane is empty almost always - the "why doesn't the live show up" bug.
+  const latest = running ?? mine[0]
+  const [openRun, setOpenRun] = useState<string | null>(null)
 
   return (
     <div className="ai-detail-scrim" onClick={onClose}>
@@ -166,26 +171,35 @@ export default function AiDetail({
           </>
         )}
 
-        {running && (
+        {latest && (
           <>
             <div className="section-title">
-              <span className="status-dot running" style={{ verticalAlign: -1, marginRight: 6 }} />
-              Live - {running.label}
+              <span className={`status-dot ${latest.status}`} style={{ verticalAlign: -1, marginRight: 6 }} />
+              {running ? 'Live' : 'Latest'} - {latest.label}
             </div>
             <pre className="aid-live aero-scroll" ref={(el) => el && (el.scrollTop = el.scrollHeight)}>
-              {running.output || '(starting…)'}
+              {latest.output || (running ? '(starting…)' : '(no output)')}
             </pre>
           </>
         )}
 
-        <div className="section-title">Recent runs</div>
-        <div className="aid-runs aero-scroll">
-          {mine.length === 0 && <p className="hint">No activity yet.</p>}
-          {mine.slice(0, 40).map((r) => {
+        <details className="aid-runs-wrap">
+          <summary className="section-title aid-runs-summary">
+            <ChevronRight size={12} className="settings-info-caret" /> Recent runs
+            {mine.length > 0 && <span className="aid-runs-count">{Math.min(mine.length, 10)}</span>}
+          </summary>
+          <div className="aid-runs aero-scroll">
+            {mine.length === 0 && <p className="hint">No activity yet.</p>}
+            {mine.slice(0, 10).map((r) => {
             const fp = firstPath(r.commandPreview)
+            const expanded = openRun === r.runId
             return (
               <div className="mini-run" key={r.runId}>
-                <div className="mini-head">
+                <div
+                  className="mini-head"
+                  onClick={() => setOpenRun(expanded ? null : r.runId)}
+                  title={expanded ? 'Hide output' : 'Show this run’s output'}
+                >
                   <span className={`status-dot ${r.status}`} />
                   <span className="mini-label">{r.label}</span>
                   <span className="mini-cmd mono">{renderCmd(r.commandPreview)}</span>
@@ -193,17 +207,22 @@ export default function AiDetail({
                     <button
                       className="mini-folder"
                       title={`Open the run folder\n${fp}`}
-                      onClick={() => window.tangos.revealPath(fp)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        window.tangos.revealPath(fp)
+                      }}
                     >
                       <FolderOpen size={13} />
                     </button>
                   )}
                   <span className="mini-dur">{dur(r)}</span>
                 </div>
+                {expanded && <pre className="mini-output aero-scroll">{r.output || '(no output)'}</pre>}
               </div>
             )
-          })}
-        </div>
+            })}
+          </div>
+        </details>
       </div>
     </div>
   )
