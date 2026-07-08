@@ -43,6 +43,7 @@ export default function App(): JSX.Element {
   const [cart, setCart] = useState<BatchItem[]>([]) // functions picked in the Viewer, to assign as a custom batch
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [reportsEnabled, setReportsEnabled] = useState(false)
+  const [version, setVersion] = useState('')
   const [useAgents, setUseAgents] = useState(false)
   const [autoLand, setAutoLand] = useState(true)
   const [autoPush, setAutoPush] = useState<{
@@ -116,6 +117,10 @@ export default function App(): JSX.Element {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
   }, [theme])
+
+  useEffect(() => {
+    window.tangos.appVersion().then(setVersion).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!mcpOpen) return
@@ -359,6 +364,7 @@ export default function App(): JSX.Element {
       {splash && <Splash label={splash} />}
       {bugOpen && <BugReport repoName={repo?.descriptor?.project?.title} onClose={() => setBugOpen(false)} />}
       {reloadNote && <div className="reload-toast aero-glass">{reloadNote}</div>}
+      {version && <div className="app-version" title="Running version">v{version}</div>}
     </div>
   )
 }

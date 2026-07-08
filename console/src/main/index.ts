@@ -1495,6 +1495,7 @@ ipcMain.handle('tips:open', () => {
   openTips()
   return true
 })
+ipcMain.handle('app:version', () => app.getVersion())
 ipcMain.handle('tour:get', () => readTour())
 ipcMain.handle('tour:open', () => {
   openTour()
