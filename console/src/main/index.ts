@@ -21,7 +21,8 @@ import { ensureTips, readTips, openTips } from './tips'
 import {
   isGitRepo, ensureWorkBranch, statusMap, changedSince, diffForFile, commitFiles,
   mergeWorkBranch, discardWorkBranch, WORK_BRANCH,
-  commitMatchedWork, remoteSlug, defaultBranch, pushToBranch, currentBranch
+  remoteSlug, defaultBranch, currentBranch,
+  pushSubsetToBranch, changedSrcFiles
 } from './gitsafe'
 import { ensurePullRequest } from './pullRequests'
 import { writeBugReport } from './bugReport'
@@ -99,45 +100,95 @@ type AutoPushStatus = {
   prUrl?: string
   at?: number
 }
-let autoPushTimer: ReturnType<typeof setTimeout> | null = null
-let autoPushRunning = false
-let autoPushStatus: AutoPushStatus = { state: 'idle' }
+let autoPushStatus: AutoPushStatus = { state: 'idle' } // aggregate (most-recent) for the UI chip
 
 function autoPushActive(): boolean {
   return state.autoPushEnabled && state.allowMutations && state.safeMode
 }
 
-/** Debounced: coalesce a burst of matches into one push ~20s after the last one. */
-function scheduleAutoPush(reason: string): void {
-  if (!autoPushActive()) return
-  if (autoPushTimer) clearTimeout(autoPushTimer)
-  autoPushTimer = setTimeout(() => void runAutoPush(reason), 20_000)
+// --- Per-agent isolation (Brennen chose "per-agent branch + PR" over shared-folder worktrees) ---
+// Every AI's matched work lands on its OWN branch (tangos/<slug>-<session>) as one rolling PR,
+// even though the AIs share a single checkout. Files are attributed to whichever agent's match
+// first made them dirty; the shared tree and checked-out branch are never disturbed (the push
+// goes through a throwaway index — see pushSubsetToBranch).
+const autoPushTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const autoPushBusy = new Set<string>()
+const claimedFiles = new Map<string, string>() // src path -> owning agent slug (first matcher wins)
+const pendingByAgent = new Map<string, Set<string>>() // agent slug -> cumulative src files for its PR
+let baselineDirtySrc = new Set<string>() // src already dirty before the session started (never attributed)
+
+/** Branch-safe identity for an AI: lowercase, alnum+dash. Kept per-model (opus != sonnet) so each
+ *  gets its own branch, unlike the family-folding used for stats. */
+function agentSlug(name?: string): string {
+  const s = (name || 'agent').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return s || 'agent'
 }
 
-async function runAutoPush(reason: string): Promise<void> {
-  if (autoPushTimer) {
-    clearTimeout(autoPushTimer)
-    autoPushTimer = null
+/** After a verified match, attribute the freshly-dirty src file(s) to this agent and debounce a
+ *  push of just that agent's cumulative work to its own branch/PR. */
+async function noteMatchAndPush(agentName: string | undefined): Promise<void> {
+  if (!autoPushActive() || !state.repoPath) return
+  const slug = agentSlug(agentName)
+  const mine = pendingByAgent.get(slug) ?? new Set<string>()
+  try {
+    for (const f of await changedSrcFiles(state.repoPath)) {
+      if (baselineDirtySrc.has(f)) continue // pre-existing dirt, not this session's work
+      const owner = claimedFiles.get(f)
+      if (!owner) {
+        claimedFiles.set(f, slug)
+        mine.add(f)
+      } else if (owner === slug) {
+        mine.add(f)
+      }
+    }
+  } catch {
+    /* status read failed; fall through with whatever we already have */
   }
-  if (autoPushRunning || !autoPushActive() || !state.repoPath) return
-  autoPushRunning = true
+  pendingByAgent.set(slug, mine)
+  scheduleAutoPush(slug)
+}
+
+/** Debounced per agent: coalesce a burst of one AI's matches into a single push ~20s after its last. */
+function scheduleAutoPush(slug: string): void {
+  if (!autoPushActive()) return
+  const t = autoPushTimers.get(slug)
+  if (t) clearTimeout(t)
+  autoPushTimers.set(slug, setTimeout(() => void runAutoPush(slug), 20_000))
+}
+
+async function runAutoPush(slug: string): Promise<void> {
+  const t = autoPushTimers.get(slug)
+  if (t) {
+    clearTimeout(t)
+    autoPushTimers.delete(slug)
+  }
+  if (autoPushBusy.has(slug) || !autoPushActive() || !state.repoPath) return
+  const files = [...(pendingByAgent.get(slug) ?? [])]
+  if (!files.length) return
+  autoPushBusy.add(slug)
   const set = (s: AutoPushStatus): void => {
     autoPushStatus = { ...s, at: Date.now() }
     pushState()
   }
   try {
     if (!(await isGitRepo(state.repoPath))) return set({ state: 'skipped', message: 'not a git checkout — clone the repo to enable pushing' })
-    const slug = await remoteSlug(state.repoPath)
-    if (!slug) return set({ state: 'skipped', message: 'no GitHub "origin" remote to push to' })
+    const gh = await remoteSlug(state.repoPath)
+    if (!gh) return set({ state: 'skipped', message: 'no GitHub "origin" remote to push to' })
     const token = secretsEnv().GITHUB_TOKEN || process.env.GITHUB_TOKEN
     if (!token) return set({ state: 'skipped', message: 'no GITHUB_TOKEN — sign into GitHub in Settings' })
 
-    set({ state: 'pushing' })
-    // Move any matched work onto the work branch and commit it (the base branch stays clean).
-    await ensureWorkBranch(state.repoPath)
-    await commitMatchedWork(state.repoPath, `tangos: matched work (${reason})`)
-    const remoteBranch = `tangos/matches-${SESSION_TAG}`
-    const pushed = await pushToBranch(state.repoPath, remoteBranch, slug, token)
+    set({ state: 'pushing', message: `${slug}: ${files.length} file(s)` })
+    const branch = `tangos/${slug}-${SESSION_TAG}`
+    const base = await defaultBranch(state.repoPath)
+    const pushed = await pushSubsetToBranch(
+      state.repoPath,
+      branch,
+      base,
+      files,
+      `tangos(${slug}): matched work`,
+      gh,
+      token
+    )
     if (!pushed.ok) {
       const denied = /denied|403|permission|not authorized|authentication|read-only/i.test(pushed.err)
       const hint = denied
@@ -145,23 +196,22 @@ async function runAutoPush(reason: string): Promise<void> {
         : ''
       return set({ state: 'error', message: `push failed: ${pushed.err.slice(-200)}${hint}` })
     }
-    const base = await defaultBranch(state.repoPath)
     const pr = await ensurePullRequest({
-      owner: slug.owner,
-      repo: slug.repo,
-      head: remoteBranch,
+      owner: gh.owner,
+      repo: gh.repo,
+      head: branch,
       base,
       token,
-      title: `tangos: matched functions (${SESSION_TAG})`,
-      body: 'Automated rolling PR from tangOS Console — matched functions from this session. Your PR review / CI gates the merge.'
+      title: `tangos/${slug}: matched functions (${SESSION_TAG})`,
+      body: `Automated per-agent PR from tangOS Console — matched functions from **${slug}** this session. CI validation + your review gate the merge.`
     })
     if (!pr.ok) return set({ state: 'error', message: `pushed, but PR failed: ${pr.error}`, prUrl: undefined })
-    set({ state: 'ok', message: pr.created ? 'opened PR' : 'updated PR', prUrl: pr.url })
-    report('autopush', { reason, branch: remoteBranch, base, prUrl: pr.url, created: pr.created })
+    set({ state: 'ok', message: `${slug}: ${pr.created ? 'opened' : 'updated'} PR`, prUrl: pr.url })
+    report('autopush', { agent: slug, branch, base, files: files.length, prUrl: pr.url, created: pr.created })
   } catch (e) {
     set({ state: 'error', message: String((e as Error).message ?? e).slice(-200) })
   } finally {
-    autoPushRunning = false
+    autoPushBusy.delete(slug)
   }
 }
 
@@ -261,8 +311,9 @@ function afterRun(
   aiStats.recordMatch(client?.name, ok, parseHexish(values.size))
   if (ok && typeof values.func === 'string') markItemDone(values.func)
   // A verified match means the agent (MCP or driven) wrote a matching source; when Writes +
-  // Review are on, roll it into the auto-push PR (debounced so a burst becomes one push).
-  if (ok) scheduleAutoPush('match')
+  // Review + Push are on, attribute the new src to THIS agent and roll it into that agent's own
+  // branch/PR (debounced so a burst becomes one push).
+  if (ok) void noteMatchAndPush(client?.name)
 }
 
 /** Flag a target done across any batch that lists it (drives batch % complete). */
@@ -1006,6 +1057,15 @@ ipcMain.handle('mcp:start', async () => {
   if (!state.descriptor || state.validationErrors.length > 0) {
     throw new Error('cannot start: descriptor missing or invalid')
   }
+  // Snapshot src files already dirty before any AI connects; these are never attributed to an
+  // agent's per-agent PR (they're pre-existing local work, not this session's matches).
+  if (state.repoPath) {
+    try {
+      baselineDirtySrc = new Set(await changedSrcFiles(state.repoPath))
+    } catch {
+      baselineDirtySrc = new Set()
+    }
+  }
   let port = DEFAULT_PORT
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
@@ -1281,7 +1341,7 @@ async function driveBatch(agentName: string): Promise<void> {
         wrongBanks: wrong ? Number(wrong[1]) : 0,
         outputTail: (landRes.output || '').slice(-4000)
       })
-      scheduleAutoPush('drive') // roll the just-landed matches into the auto-push PR
+      await noteMatchAndPush(agentName) // roll this driver's just-landed matches into its own PR
     }
   } finally {
     apiDriving.delete(agentName)
@@ -1387,6 +1447,10 @@ ipcMain.handle('policy:setAutoLand', (_e, on: boolean) => {
 ipcMain.handle('policy:setAutoPush', (_e, on: boolean) => {
   state.autoPushEnabled = !!on
   autoPushStatus = { state: 'idle' } // clear any stale status when toggling
+  if (!on) {
+    for (const t of autoPushTimers.values()) clearTimeout(t)
+    autoPushTimers.clear()
+  }
   saveSettings()
   pushState()
   return state.autoPushEnabled

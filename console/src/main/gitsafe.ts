@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 export const WORK_BRANCH = 'tangos/work'
 
@@ -9,12 +10,16 @@ export interface ChangedFile {
   status: 'new' | 'modified'
 }
 
-function git(repo: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
+function git(
+  repo: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv
+): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve) => {
     let out = ''
     let err = ''
     try {
-      const c = spawn('git', args, { cwd: repo, env: process.env })
+      const c = spawn('git', args, { cwd: repo, env: env ? { ...process.env, ...env } : process.env })
       c.stdout?.on('data', (d) => (out += d))
       c.stderr?.on('data', (d) => (err += d))
       c.on('error', (e) => resolve({ code: -1, out, err: err + String(e) }))
@@ -156,6 +161,62 @@ export async function mergeWorkBranch(repo: string, base: string): Promise<void>
   const mg = await git(repo, ['merge', '--no-ff', WORK_BRANCH, '-m', `tangos: merge ${WORK_BRANCH}`])
   if (mg.code !== 0) throw new Error(`merge failed: ${mg.err.trim()}`)
   await git(repo, ['branch', '-D', WORK_BRANCH])
+}
+
+/** Working-tree source files that are new or modified (porcelain), for per-agent attribution. */
+export async function changedSrcFiles(repo: string): Promise<string[]> {
+  const map = await statusMap(repo)
+  const out: string[] = []
+  for (const [p, code] of map) {
+    if (!p.startsWith('src/')) continue
+    if (code === '!!') continue // ignored
+    out.push(p)
+  }
+  return out
+}
+
+/** Publish ONE agent's matched files as an isolated, squashed branch without ever touching the
+ *  shared working tree or the checked-out branch. It builds a tree = base tree + the given
+ *  working-tree files in a throwaway index (read-tree -> add -> write-tree -> commit-tree ->
+ *  update-ref), then force-pushes the branch (the agent's own rolling PR head). This is what lets
+ *  several AIs share one checkout yet each land in tangos/<agent>-<session> without colliding. */
+export async function pushSubsetToBranch(
+  repo: string,
+  branch: string,
+  base: string,
+  files: string[],
+  message: string,
+  slug: { owner: string; repo: string },
+  token: string
+): Promise<{ ok: boolean; err: string }> {
+  if (!files.length) return { ok: false, err: 'no files to push' }
+  // Prefer the remote tip so the PR diffs cleanly against current main; fall back to local base.
+  let baseRef = `origin/${base}`
+  if ((await git(repo, ['rev-parse', '--verify', '--quiet', baseRef])).code !== 0) baseRef = base
+  const idxFile = join(tmpdir(), `tangos-idx-${process.pid}-${Date.now()}`)
+  const env: NodeJS.ProcessEnv = { GIT_INDEX_FILE: idxFile }
+  try {
+    let r = await git(repo, ['read-tree', baseRef], env)
+    if (r.code !== 0) return { ok: false, err: `read-tree: ${(r.err || r.out).trim()}` }
+    r = await git(repo, ['add', '--', ...files], env)
+    if (r.code !== 0) return { ok: false, err: `add: ${(r.err || r.out).trim()}` }
+    const tree = (await git(repo, ['write-tree'], env)).out.trim()
+    if (!tree) return { ok: false, err: 'write-tree produced no tree' }
+    const parent = (await git(repo, ['rev-parse', baseRef])).out.trim()
+    const commit = (await git(repo, ['commit-tree', tree, '-p', parent, '-m', message], env)).out.trim()
+    if (!commit) return { ok: false, err: 'commit-tree produced no commit (is git user.name/email set?)' }
+    const up = await git(repo, ['update-ref', `refs/heads/${branch}`, commit])
+    if (up.code !== 0) return { ok: false, err: `update-ref: ${up.err.trim()}` }
+    const url = `https://x-access-token:${token}@github.com/${slug.owner}/${slug.repo}.git`
+    const push = await git(repo, ['push', '--force', url, `refs/heads/${branch}:refs/heads/${branch}`])
+    return { ok: push.code === 0, err: (push.err || push.out).trim() }
+  } finally {
+    try {
+      unlinkSync(idxFile)
+    } catch {
+      /* index file may not exist if read-tree never ran */
+    }
+  }
 }
 
 /** Abandon the work branch: back to base, delete the branch (its commits are dropped). */
