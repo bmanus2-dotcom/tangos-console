@@ -372,6 +372,46 @@ function pullNextBatch(agentName?: string): Batch | null {
   return batch
 }
 
+// Long-poll support for next_batch. Returning instantly-empty makes the AGENT own an expensive
+// re-poll loop (it burns tokens waking up, re-reading context, deciding "still empty", sleeping).
+// Instead the MCP handler awaits here: it resolves the moment a matching batch is enqueued, or
+// after a short timeout, so the model parks on one blocking call instead of spinning.
+interface BatchWaiter {
+  agentName?: string
+  resolve: (b: Batch | null) => void
+  timer: ReturnType<typeof setTimeout>
+}
+const batchWaiters = new Set<BatchWaiter>()
+
+/** Called by addBatch: hand the freshly-enqueued work to a parked waiter (first match wins;
+ *  pullNextBatch marks it active so no two waiters get the same batch). */
+function notifyBatchWaiters(): void {
+  for (const w of [...batchWaiters]) {
+    const b = pullNextBatch(w.agentName)
+    if (!b) continue // not for this waiter (or already taken) — keep it parked
+    clearTimeout(w.timer)
+    batchWaiters.delete(w)
+    w.resolve(b)
+  }
+}
+
+/** Resolve immediately if work is queued, else block up to timeoutMs for an enqueue (then null). */
+function waitForBatch(agentName: string | undefined, timeoutMs: number): Promise<Batch | null> {
+  const now = pullNextBatch(agentName)
+  if (now) return Promise.resolve(now)
+  return new Promise((resolve) => {
+    const w: BatchWaiter = {
+      agentName,
+      resolve,
+      timer: setTimeout(() => {
+        batchWaiters.delete(w)
+        resolve(null)
+      }, timeoutMs)
+    }
+    batchWaiters.add(w)
+  })
+}
+
 function currentRuntime(): TangosRuntime {
   return state.descriptor?.runtime ?? { cwd: '.', python: 'python', shell: false }
 }
@@ -426,7 +466,7 @@ const mcp = new McpManager(() => ({
   runtime: currentRuntime(),
   allowMutations: state.allowMutations,
   enabledToolIds: state.enabledToolIds,
-  batchApi: { next: pullNextBatch, list: () => state.batches },
+  batchApi: { next: pullNextBatch, wait: waitForBatch, list: () => state.batches },
   run: runToolSafely
 }))
 mcp.onClientsChange = () => pushState()
@@ -511,7 +551,7 @@ function agentPrompt(): string {
     '  VERIFY you actually connected: call list_tools (or next_batch) and confirm a real tool result comes back. If nothing round-trips, you are NOT connected — do not report "connected" without a tool response, and check that the console shows your session under Connected agents.',
     '',
     'THEN:',
-    '  1. Your first and ONLY action is to call next_batch, then WAIT. Until it returns an actual batch you are idle: if it comes back empty, wait ~30-60s and call next_batch again, and do NOTHING else — do not call any other tool, do not read files or notes, do not "set up" or pick your own targets. Just wait and re-poll. Self-assigning work on an empty queue is the #1 way to waste tokens here; do not do it.',
+    '  1. Your first and ONLY action is to call next_batch. It BLOCKS server-side until a batch is ready (or ~45s) — so you do NOT wait, sleep, or heartbeat yourself; just call it and it parks until there is work. If it ever returns empty (a timeout), your entire next response is a single next_batch call to keep parking, nothing else. While idle do NOTHING else — no other tools, no reading files or notes, no "setting up" or picking your own targets. Self-assigning work on an empty queue is the #1 way to waste tokens here; do not do it.',
     `  2. ONLY once next_batch hands you a real batch do you start using tools. It gives your role (if any), each target WITH a ready-to-run match call, this repo's KNOWN WALLS, and how to work them. Then drive the toolchain: ${shown}.`,
     '  3. Respect required args: each tool lists its REQUIRED args (see list_tools or tangos.json tools[]) — e.g. match needs c, func, addr, size. Use the ready call next_batch gives you; never omit `c`.',
     '  4. On any tool error (-32602 / compile fail): read that tool\'s args in tangos.json, fix the call, and RETRY. Never end your turn on the first failed call.',
@@ -1139,6 +1179,7 @@ function addBatch(draft: BatchDraft, targetAgent?: string): Batch[] {
     items: b.items.map((i) => i.ref)
   })
   pushState()
+  notifyBatchWaiters() // wake any agent long-polling next_batch for this work
   return state.batches
 }
 

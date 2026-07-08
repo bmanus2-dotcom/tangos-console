@@ -13,6 +13,9 @@ export { activityBus } from './activityBus'
 
 export interface BatchApi {
   next: (agentName?: string) => Batch | null
+  // Long-poll: resolves the moment a matching batch is enqueued, or null after timeoutMs. Lets
+  // next_batch block server-side instead of the agent owning a token-burning re-poll loop.
+  wait: (agentName: string | undefined, timeoutMs: number) => Promise<Batch | null>
   list: () => Batch[]
 }
 
@@ -163,23 +166,24 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
     const api = ctx.batchApi
     server.tool(
       'next_batch',
-      'Pull the next queued batch of work from the tangOS Console. Returns your role instructions (if designated) plus the batch prompt and its target functions, and marks it active. Call repeatedly in a loop to drain the queue; stop when it reports the queue is empty.',
+      'Pull the next batch of work from the tangOS Console. Returns your role instructions (if designated) plus the batch prompt and its target functions, and marks it active. This call BLOCKS server-side until a batch is ready (or ~45s), so just call it once and it parks until there is work — no polling loop, no waiting on your side.',
       {},
       async () => {
         const idle = getClient()
-        const b = api.next(idle?.name) // only batches addressed to this agent (or unaddressed)
+        // Long-poll: block here until a batch is enqueued for this agent, or ~45s elapses. The
+        // wait is server-side and free, so the agent parks on ONE call instead of spinning an
+        // expensive re-poll loop (waking, re-reading context, deciding "still empty", sleeping).
+        const b = await api.wait(idle?.name, 45_000)
         if (!b) {
-          // No batch assigned: WAIT. The only allowed action while idle is to re-poll
-          // next_batch. This is deliberately the whole message — do not let an idle agent
-          // self-assign work (the repeated token-burn: reading long notes, dumping the
-          // worklist, starting coddog on an empty queue). Tools come out only once a real
-          // batch is returned below.
+          // Timed out with no work. NOT a spin: the wait already happened server-side, so the
+          // agent simply re-issues next_batch once and blocks again. Cap it so a truly idle agent
+          // eventually hands back rather than holding the session forever.
           const n = idle ? (idle.emptyPolls = (idle.emptyPolls ?? 0) + 1) : 1
-          const IDLE_CAP = 5
+          const IDLE_CAP = 8
           const text =
             n >= IDLE_CAP
-              ? `[tangos] queue still empty after ${n} idle polls. STOP — do not keep polling. Hand back to the human with one short line, e.g. "queue empty, standing by — re-engage me when there's work."`
-              : `[tangos] queue empty — no batch assigned (idle poll ${n}/${IDLE_CAP}). WAIT ~30-60s, then call next_batch again. REQUIRED before each re-poll: print ONE short heartbeat line, e.g. "idle - queue empty, poll ${n}, waiting ~45s" — never wait silently, and that heartbeat is the ONLY output allowed while idle. Do NOT call any other tool, read notes/files, or self-assign targets. After ${IDLE_CAP} empty polls, stop and hand back.`
+              ? `[tangos] still no work after ${n} waits (~${Math.round((n * 45) / 60)} min idle). STOP — hand back to the human with one short line, e.g. "queue empty, standing by — re-engage me when there's work."`
+              : `[tangos] no work yet (waited 45s, empty ${n}/${IDLE_CAP}). Call next_batch again — it BLOCKS until a batch arrives, so it costs no thinking. Your ENTIRE next response is a single next_batch call: no heartbeat, no analysis, no other tools, no self-assigned targets.`
           return { content: [{ type: 'text' as const, text }] }
         }
         if (idle) idle.emptyPolls = 0
@@ -211,7 +215,7 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
             '4. For first-pass triage use `fdiff` with `"quiet": true` (returns just `mismatches=N/total`) — do NOT lean on match\'s full byte dump or `brief` to triage. Pull the full diff only once you are fixing a specific block. `falign` handles size-mismatched candidates but is EXPENSIVE on large functions — pass `"quiet": true` or `"limit": 1` and fix the earliest diverging block first.\n' +
             '5. Overlay (ov*) targets: keep the `module` in the ready call — it auto-loads the overlay binary, so you do NOT need bin/base. (If overlay bytes read back empty/0, your repo is a stale ZIP snapshot — use a fresh `git clone`.) Run heavy tools one at a time; pass `"brief": true` for large functions.\n' +
             '6. End EVERY working turn with a one-line status: what you just did, the current best divergence, and the single next action. Never end a turn silently after a tool result.\n' +
-            '7. When these targets are done, call `next_batch` for more. If it returns empty, WAIT: print one short heartbeat line and re-poll every ~30-60s, calling next_batch ONLY — no worklist, coddog, notes, or self-assigned targets. After ~5 empty polls, stop and hand back.\n' +
+            '7. When these targets are done, call `next_batch` for more. It BLOCKS until there is work (or ~45s), so just call it — no waiting, sleeping, or heartbeat loop on your side. If it returns empty (a timeout), your entire response is one more next_batch call to keep parking — no worklist, coddog, notes, or self-assigned targets. After several empty waits it tells you to hand back.\n' +
             '8. Coordinate (best-effort): try `claims_check` / `claims_lock` (module/start/end) to reserve a span and `claims_release` when banked. If claims return 401 / "missing key", claims just are not configured here — note it once and PROCEED; do not retry or stall. Your batch is already yours (the console hands each agent a distinct set), so an unclaimed target is fine to work.\n' +
             '9. Stay in your lane: edit source ONLY for the targets above. If an edit regresses a function (worse diff or bigger size), REVERT it — never leave a tracked source file worse than you found it. Keep scratch files, notes, and session reports in a temp/scratch dir, NEVER inside the repo or beside source files.\n' +
             'Fallback if native MCP tools are unavailable in your client: run `npx tsx scripts/mcp-run.mts <calls.json> <your-name>` (e.g. grok) from the tangOS console dir, where calls.json is [{"tool":"match","args":{...}}]. Pass your name so the live viewer tags your runs correctly (omitting it shows "agent").'
