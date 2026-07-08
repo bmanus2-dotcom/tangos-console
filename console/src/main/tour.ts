@@ -47,11 +47,11 @@ This is where you control all of your AIs and track their stats. :joke[One food 
 
 [tongue] @controller
 First batch
-Hit "Assign 16" on a box to hand it 16 similar functions, after a bit of loading, hit drive. :joke[If I do not meet my daily caloric intake nothing will happen.]
+Hit "Assign 16" on a box to hand it 16 similar functions, after a bit of loading, hit drive. :joke[If I do not meet my daily caloric intake, the star will grow 350 sp stronger.]
 
 [smile] @policies
 Safety toggles
-By default keep these on as it drives the entire pipeline and have many internal safety checks still.
+By default keep these on as it drives the entire pipeline and have many internal safety checks still. :joke[The star is currently at three hundred and eighty seven thousand five hundred and fifty (387550) sp (pronounced the same as fp (ef-pee)).]
 
 [handsup]
 You're ready to go!
