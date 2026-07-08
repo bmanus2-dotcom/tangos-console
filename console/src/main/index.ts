@@ -1,3 +1,4 @@
+import './appName' // MUST be first: renames the data folder + migrates it before anything reads userData
 import { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard } from 'electron'
 import { join, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
