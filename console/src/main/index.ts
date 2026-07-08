@@ -918,7 +918,9 @@ function genPlanFor(role: string | undefined, count: number): { schedId: string;
     case 'Explorer':
       return { schedId: 'coddog', values: { limit: count, spread: true } }
     case 'Draft checker':
-      return { schedId: 'refine_wl', values: { limit: count } }
+      // include_attempted so a driven refiner keeps working the near-miss pool instead of drying
+      // up to ~1 target once refine_wl's ledger has seen everything close.
+      return { schedId: 'refine_wl', values: { limit: count, include_attempted: true } }
     default:
       return { schedId: 'coddog', values: { limit: count } }
   }

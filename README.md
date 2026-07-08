@@ -14,6 +14,13 @@ it knows the repo's tools, compiler, data source, and rules.
 | **tangOS Docs** | Browsable catalog of a repo's tools, generated from `tangos.json`. | planned (`docs/`) |
 | **tangOS Atlas** | Progress atlas / treemap (formerly Chaos Viewer). | planned rebrand |
 
+## Download
+
+**tangOS Console** ships as a desktop app that auto-updates from this repo's [Releases](https://github.com/tangosdev/tangOS/releases).
+
+- **Windows** - download and run the installer; it self-updates from here. Not code-signed yet, so Windows warns once: click *More info*, then *Run anyway*.
+- **macOS** - download the `.dmg` (Intel or Apple Silicon). Unsigned, so right-click the app and choose *Open* (or run `xattr -cr "/Applications/tangOS Console.app"`).
+
 ## The descriptor: `tangos.json`
 
 - Schema: [`schema/tangos.schema.json`](schema/tangos.schema.json)

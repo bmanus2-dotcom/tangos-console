@@ -87,7 +87,7 @@
     "publish": {
       "provider": "github",
       "owner": "tangosdev",
-      "repo": "tangos-console",
+      "repo": "tangOS",
       "releaseType": "release"
     }
   }
