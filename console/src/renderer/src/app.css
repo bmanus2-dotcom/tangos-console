@@ -920,7 +920,8 @@ html, body, #root { background: transparent !important; }
 /* :joke[...] inline markup in any Tango text box -> animated gradient of the current theme's
    brand colors (primary -> accent -> primary), shimmering across the span. */
 .joke-text {
-  font-weight: 800;
+  font-weight: normal;
+  font-style: italic;
   background: linear-gradient(
     90deg,
     rgb(var(--aero-primary-rgb)),
