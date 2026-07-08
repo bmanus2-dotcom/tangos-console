@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Settings2, FolderOpen, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Settings2, FolderOpen, RefreshCw, AlertTriangle, MessageCircle, Bug } from 'lucide-react'
 import type {
   RepoState, McpState, ActivityRun, ActivityEvent, Batch, BatchItem, Review, AiAgent
 } from '../../shared/types'
@@ -18,6 +18,7 @@ import AppSwitcher, { type AppView } from './components/AppSwitcher'
 import Splash from './components/Splash'
 import ReviewPanel from './components/ReviewPanel'
 import WindowControls from './components/WindowControls'
+import BugReport from './components/BugReport'
 
 const THEMES = ['aero', 'sunset', 'deepsea', 'bubblegum', 'mint', 'hal']
 const APP_LABEL: Record<AppView, string> = { console: 'Chaos Controller', atlas: 'Chaos Viewer' }
@@ -56,6 +57,7 @@ export default function App(): JSX.Element {
   const [tourSeen, setTourSeen] = useState(true) // assume seen until state loads, to avoid a flash
   const [detailName, setDetailName] = useState<string | null>(null)
   const [reloadNote, setReloadNote] = useState<string | null>(null)
+  const [bugOpen, setBugOpen] = useState(false)
   const popRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
 
@@ -289,6 +291,20 @@ export default function App(): JSX.Element {
             </button>
           )}
           {showControls && (
+            <button className="tb-btn icononly" onClick={() => setBugOpen(true)} title="Report a bug">
+              <Bug size={15} />
+            </button>
+          )}
+          {showControls && repo?.descriptor?.project?.discord && (
+            <button
+              className="tb-btn icononly discord"
+              onClick={() => window.tangos.openExternal(repo.descriptor!.project.discord!)}
+              title="Join the Discord"
+            >
+              <MessageCircle size={15} />
+            </button>
+          )}
+          {showControls && (
             <button className="tb-btn icononly" onClick={reloadDescriptor} title="Reload tangos.json from disk">
               <RefreshCw size={15} />
             </button>
@@ -341,6 +357,7 @@ export default function App(): JSX.Element {
       )}
       {detailAgent && <AiDetail agent={detailAgent} runs={runs} onClose={() => setDetailName(null)} />}
       {splash && <Splash label={splash} />}
+      {bugOpen && <BugReport repoName={repo?.descriptor?.project?.title} onClose={() => setBugOpen(false)} />}
       {reloadNote && <div className="reload-toast aero-glass">{reloadNote}</div>}
     </div>
   )

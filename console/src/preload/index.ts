@@ -129,6 +129,11 @@ const api = {
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url),
   openPath: (p: string): Promise<string> => ipcRenderer.invoke('shell:openPath', p),
   revealPath: (p: string): Promise<string> => ipcRenderer.invoke('shell:revealPath', p),
+  pickBugScreenshots: (): Promise<string[]> => ipcRenderer.invoke('bug:pickScreenshots'),
+  saveBugImage: (bytes: number[], ext: string): Promise<string | null> =>
+    ipcRenderer.invoke('bug:saveImage', bytes, ext),
+  submitBug: (p: { description: string; screenshots: string[] }): Promise<{ folder: string }> =>
+    ipcRenderer.invoke('bug:submit', p),
   copy: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:write', text),
 
   onActivity: (cb: (ev: ActivityEvent) => void): (() => void) => {

@@ -964,6 +964,37 @@ html, body, #root { background: transparent !important; }
   position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,0.32); backdrop-filter: blur(3px); -webkit-app-region: no-drag;
 }
+/* topbar Discord button (blurple on hover) */
+.tb-btn.icononly.discord:hover { color: #5865f2; }
+
+/* report-a-bug dialog */
+.bug-report {
+  width: min(520px, 92vw); max-height: 86vh; overflow: auto; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.bug-report .head { display: flex; align-items: center; gap: 8px; }
+.bug-report .head h2 { margin: 0; font-size: 16px; }
+.bug-desc {
+  width: 100%; min-height: 120px; resize: vertical; font: inherit; font-size: 13px;
+  padding: 9px 11px; border-radius: 10px; border: 1px solid var(--aero-border);
+  background: rgba(255,255,255,0.7); color: var(--aero-text);
+}
+.bug-shots { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bug-chip {
+  display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
+  padding: 3px 4px 3px 8px; border-radius: 999px; max-width: 180px; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+  background: rgba(59,130,246,0.14); border: 1px solid rgba(59,130,246,0.4); color: var(--aero-text);
+}
+.bug-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.bug-done { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding: 12px 4px; }
+.bug-check { color: rgb(var(--aero-matched-rgb)); }
+.bug-done p { margin: 0; font-size: 13px; line-height: 1.5; }
+.bug-folder {
+  font-size: 11px; word-break: break-all; padding: 6px 8px; border-radius: 8px;
+  background: rgba(0,0,0,0.05); color: var(--aero-muted); max-width: 100%;
+}
+
 .ai-detail {
   width: min(560px, 92vw); max-height: 84vh; overflow: auto; padding: 16px 18px;
   display: flex; flex-direction: column; gap: 8px;

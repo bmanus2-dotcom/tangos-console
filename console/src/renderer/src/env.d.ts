@@ -97,6 +97,9 @@ export interface TangosApi {
   openExternal(url: string): Promise<void>
   openPath(p: string): Promise<string>
   revealPath(p: string): Promise<string>
+  pickBugScreenshots(): Promise<string[]>
+  saveBugImage(bytes: number[], ext: string): Promise<string | null>
+  submitBug(p: { description: string; screenshots: string[] }): Promise<{ folder: string }>
   copy(text: string): Promise<boolean>
   onActivity(cb: (ev: ActivityEvent) => void): () => void
   onState(cb: (s: FullState) => void): () => void

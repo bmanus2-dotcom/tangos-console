@@ -21,9 +21,11 @@ import { ensureTips, readTips, openTips } from './tips'
 import {
   isGitRepo, ensureWorkBranch, statusMap, changedSince, diffForFile, commitFiles,
   mergeWorkBranch, discardWorkBranch, WORK_BRANCH,
-  commitMatchedWork, remoteSlug, defaultBranch, pushToBranch
+  commitMatchedWork, remoteSlug, defaultBranch, pushToBranch, currentBranch
 } from './gitsafe'
 import { ensurePullRequest } from './pullRequests'
+import { writeBugReport } from './bugReport'
+import { release as osRelease } from 'node:os'
 import type {
   TangosDescriptor, TangosRuntime, TangosTool, RepoState, McpState, Batch, BatchDraft, BatchItem,
   Review, RunResult, AtlasDb, SecretsInfo, AiAgent, ConnectedClient
@@ -1533,6 +1535,92 @@ ipcMain.handle('shell:revealPath', (_e, p: string) => {
 ipcMain.handle('clipboard:write', (_e, text: string) => {
   clipboard.writeText(text)
   return true
+})
+
+// ---- bug report -----------------------------------------------------------
+ipcMain.handle('bug:pickScreenshots', async () => {
+  if (!mainWindow) return []
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Attach screenshots',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+  })
+  return res.canceled ? [] : res.filePaths
+})
+ipcMain.handle('bug:saveImage', (_e, bytes: number[], ext: string) => {
+  try {
+    const dir = join(app.getPath('temp'), 'tangos-bug-paste')
+    mkdirSync(dir, { recursive: true })
+    const p = join(dir, `paste-${Date.now()}.${(ext || 'png').replace(/[^a-z0-9]/gi, '')}`)
+    writeFileSync(p, Buffer.from(bytes))
+    return p
+  } catch {
+    return null
+  }
+})
+ipcMain.handle('bug:submit', async (_e, payload: { description: string; screenshots: string[] }) => {
+  const isGit = !!state.repoPath && existsSync(join(state.repoPath, '.git'))
+  let branch: string | undefined
+  if (isGit && state.repoPath) {
+    try {
+      branch = (await currentBranch(state.repoPath)) || undefined
+    } catch {
+      /* ignore */
+    }
+  }
+  const debug = {
+    generatedAt: new Date().toISOString(),
+    app: {
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+      os: osRelease()
+    },
+    repo: { path: state.repoPath, project: state.descriptor?.project?.name, isGit, branch, validation: state.validationErrors },
+    mcp: mcpState(),
+    policies: {
+      allowMutations: state.allowMutations,
+      safeMode: state.safeMode,
+      useAgents: state.useAgents,
+      autoLand: state.autoLand,
+      autoPushEnabled: state.autoPushEnabled
+    },
+    autoPush: autoPushStatus,
+    agents: agentsSnapshot().map((a) => ({
+      name: a.name,
+      kind: a.kind,
+      roles: a.roles,
+      connected: a.connected,
+      matches: a.stats.totalMatches,
+      attempts: a.stats.matchAttempts,
+      hitRate: a.stats.hitRate
+    })),
+    recentRuns: activityBus
+      .snapshot()
+      .slice(-25)
+      .map((r) => ({
+        tool: r.toolId,
+        label: r.label,
+        status: r.status,
+        exitCode: r.exitCode,
+        source: r.source,
+        client: r.client?.name,
+        ms: (r.finishedAt ?? Date.now()) - r.startedAt,
+        outputTail: (r.output || '').slice(-1500)
+      })),
+    secretsPresent: listSecrets().map((s) => s.name) // NAMES only, never the values
+  }
+  const { folder, markdown } = writeBugReport({
+    description: payload.description,
+    screenshots: payload.screenshots ?? [],
+    debug,
+    appVersion: app.getVersion()
+  })
+  clipboard.writeText(markdown)
+  await shell.openPath(folder)
+  return { folder }
 })
 
 // ---- lifecycle ------------------------------------------------------------
