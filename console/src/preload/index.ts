@@ -126,6 +126,7 @@ const api = {
     ipcRenderer.invoke('repo:cloneAndOpen', url),
   repoUpdateStatus: (): Promise<RepoUpdateStatus> => ipcRenderer.invoke('repo:updateStatus'),
   repoPull: (): Promise<{ ok: boolean; err?: string; behind?: number }> => ipcRenderer.invoke('repo:pull'),
+  repoPushWorkPr: (): Promise<{ ok: boolean; url?: string; error?: string }> => ipcRenderer.invoke('repo:pushWorkPr'),
 
   minimizeWin: (): Promise<void> => ipcRenderer.invoke('win:minimize'),
   maximizeToggle: (): Promise<boolean> => ipcRenderer.invoke('win:maximizeToggle'),

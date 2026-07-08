@@ -123,6 +123,11 @@ export async function remoteSlug(repo: string): Promise<{ owner: string; repo: s
   return null
 }
 
+/** git config user.name for the repo, for naming a contributor's push branch. Falls back to ''. */
+export async function gitUserName(repo: string): Promise<string> {
+  return (await git(repo, ['config', 'user.name'])).out.trim()
+}
+
 /** Whether the working tree has any uncommitted or untracked changes (matched work not yet banked). */
 export async function isDirty(repo: string): Promise<boolean> {
   return (await git(repo, ['status', '--porcelain'])).out.trim().length > 0

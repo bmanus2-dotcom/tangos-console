@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, ArrowDownToLine, Download, Loader2, Check } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, Download, Loader2, Check, GitPullRequest } from 'lucide-react'
 import type { RepoState, RepoUpdateStatus } from '../../../shared/types'
 
 /** Warns when the local checkout is stale and offers a one-click fix:
@@ -65,6 +65,23 @@ export default function RepoUpdateBanner({
     }
   }
 
+  async function pushWorkPr(): Promise<void> {
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await window.tangos.repoPushWorkPr()
+      if (r.ok) {
+        if (r.url) window.tangos.openExternal(r.url)
+        setMsg('Opened a PR with your local commits.')
+        setStatus(await window.tangos.repoUpdateStatus())
+      } else {
+        setMsg(r.error?.includes('signed into GitHub') ? 'Sign into GitHub in Settings, then try again.' : `Push failed: ${r.error ?? 'unknown error'}`)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // Case 1: a Download-ZIP snapshot, not a real checkout.
   if (repo.path && repo.isGit === false) {
     return (
@@ -91,23 +108,44 @@ export default function RepoUpdateBanner({
     )
   }
 
-  // Case 2: a git checkout that's behind the remote default branch.
-  if (status?.isGit && (status.behind ?? 0) > 0) {
-    const db = status.defaultBranch ?? 'main'
-    return (
-      <div className="repo-warn behind">
-        <ArrowDownToLine size={14} />
-        <span>
-          Your local is <b>{status.behind}</b> commit{status.behind === 1 ? '' : 's'} behind{' '}
-          <code>origin/{db}</code>
-          {status.dirty ? ' (your uncommitted work is kept)' : ''}.
-        </span>
-        <button className="repo-warn-btn" disabled={busy} onClick={update}>
-          {busy ? <Loader2 size={13} className="spin" /> : <ArrowDownToLine size={13} />} Update
-        </button>
-        {msg && <span className="repo-warn-msg">{msg}</span>}
-      </div>
-    )
+  // Case 2: a git checkout that's behind and/or has local commits the remote lacks.
+  {
+    const behind = status?.behind ?? 0
+    const ahead = status?.ahead ?? 0
+    if (status?.isGit && (behind > 0 || ahead > 0)) {
+      const db = status.defaultBranch ?? 'main'
+      const diverged = ahead > 0
+      return (
+        <div className="repo-warn behind">
+          {diverged ? <GitPullRequest size={14} /> : <ArrowDownToLine size={14} />}
+          <span>
+            {behind > 0 && (
+              <>
+                Your local is <b>{behind}</b> commit{behind === 1 ? '' : 's'} behind <code>origin/{db}</code>
+                {diverged ? ' and ' : `${status?.dirty ? ' (your uncommitted work is kept)' : ''}.`}
+              </>
+            )}
+            {diverged && (
+              <>
+                {behind > 0 ? 'has ' : 'You have '}
+                <b>{ahead}</b> local commit{ahead === 1 ? '' : 's'} the remote doesn&apos;t - a fast-forward
+                can&apos;t reconcile that. Push your work as a PR to contribute it (your local branch is untouched).
+              </>
+            )}
+          </span>
+          {diverged ? (
+            <button className="repo-warn-btn" disabled={busy} onClick={pushWorkPr}>
+              {busy ? <Loader2 size={13} className="spin" /> : <GitPullRequest size={13} />} Push work as PR
+            </button>
+          ) : (
+            <button className="repo-warn-btn" disabled={busy} onClick={update}>
+              {busy ? <Loader2 size={13} className="spin" /> : <ArrowDownToLine size={13} />} Update
+            </button>
+          )}
+          {msg && <span className="repo-warn-msg">{msg}</span>}
+        </div>
+      )
+    }
   }
 
   // Brief confirmation after an update lands (or a failure message), else nothing.

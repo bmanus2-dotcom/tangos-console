@@ -25,7 +25,7 @@ import {
   mergeWorkBranch, discardWorkBranch, WORK_BRANCH,
   remoteSlug, defaultBranch, currentBranch,
   pushSubsetToBranch, changedSrcFiles,
-  isDirty, aheadBehind, fetchRemote, fastForwardPull
+  isDirty, aheadBehind, fetchRemote, fastForwardPull, pushToBranch, gitUserName
 } from './gitsafe'
 import { ensurePullRequest } from './pullRequests'
 import { writeBugReport } from './bugReport'
@@ -1311,7 +1311,7 @@ async function driveBatch(agentName: string): Promise<void> {
     readOnly: false,
     command: '{python} tools/glm_refine.py --wl {wl} --out {out} --jobs {jobs}'
   }
-  const jobs = state.useAgents ? 6 : 1 // "Use agents" -> parallel workers
+  const jobs = state.useAgents ? 3 : 1 // "Use agents" -> parallel workers (kept modest: the GLM/z.ai API rate-limits hard past ~3 concurrent)
   batch.status = 'active'
   apiDriving.add(agentName)
   aiStats.setCurrent(agentName, {
@@ -1710,6 +1710,37 @@ ipcMain.handle('repo:pull', async (): Promise<{ ok: boolean; err?: string; behin
   }
   const ab = res.ok ? await aheadBehind(repo, db) : null
   return { ok: res.ok, err: res.ok ? undefined : res.err, behind: ab?.behind }
+})
+
+// Diverged clone (local commits the remote lacks, can't fast-forward): push those commits to a
+// per-user branch and open a PR, so the contributor's committed work reaches the shared repo the
+// same way auto-push does. Leaves their local branch untouched.
+ipcMain.handle('repo:pushWorkPr', async (): Promise<{ ok: boolean; url?: string; error?: string }> => {
+  const repo = state.repoPath
+  if (!repo || !(await isGitRepo(repo))) return { ok: false, error: 'not a git checkout' }
+  const gh = await remoteSlug(repo)
+  if (!gh) return { ok: false, error: 'no GitHub "origin" remote to push to' }
+  const token = secretsEnv().GITHUB_TOKEN || process.env.GITHUB_TOKEN
+  if (!token) return { ok: false, error: 'not signed into GitHub - sign in from Settings first' }
+  const base = await defaultBranch(repo)
+  const who = (await gitUserName(repo)).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'work'
+  const branch = `tangos/${who}`
+  const pushed = await pushToBranch(repo, branch, gh, token)
+  if (!pushed.ok) {
+    const denied = /denied|403|permission|not authorized|authentication|read-only/i.test(pushed.err)
+    return { ok: false, error: (denied ? 'GitHub token lacks push access - sign out and back in from Settings. ' : '') + pushed.err.slice(-160) }
+  }
+  const pr = await ensurePullRequest({
+    owner: gh.owner,
+    repo: gh.repo,
+    head: branch,
+    base,
+    token,
+    title: `tangos: matched work (${branch})`,
+    body: 'Matched functions pushed from tangOS Console (reconciling a diverged clone). Review + CI gate the merge.'
+  })
+  if (!pr.ok) return { ok: false, error: `pushed to ${branch}, but PR failed: ${pr.error}` }
+  return { ok: true, url: pr.url }
 })
 
 ipcMain.handle('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
