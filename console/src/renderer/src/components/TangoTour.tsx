@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, type CSSProperties } from 'react'
 import { X } from 'lucide-react'
 import { frame } from '../tangoFrames'
+import { richText } from '../richText'
 
 interface Step {
   target?: string // CSS selector to spotlight; centered if absent
@@ -112,8 +113,8 @@ export default function TangoTour({ onDone }: { onDone: () => void }): JSX.Eleme
       <div className="tour-pop" style={popStyle(rect)}>
         <img className="tour-tango" src={frame(step.emotion)} alt="Tango" draggable={false} />
         <div className="tour-box">
-          <div className="tour-box-title">{step.title}</div>
-          <p className="tour-box-body">{step.body}</p>
+          <div className="tour-box-title">{richText(step.title)}</div>
+          <p className="tour-box-body">{richText(step.body)}</p>
           <div className="tour-nav">
             <div className="tt-dots">
               {steps.map((_, k) => (

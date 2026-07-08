@@ -22,6 +22,7 @@ const DEFAULTS = `# Tango's intro tour - the first-run walkthrough. Reword the t
 #   rest    = the body text
 # Emotions: [smile] [thinking] [shy] [tongue] [handsup] [idle]
 # Spots (what to spotlight; omit the @spot to center the step): @toggle @mcp @settings @controller @policies
+# Highlight: wrap words in :joke[ ... ] to paint them as a shimmering gradient of Tango's colors.
 # Lines starting with # are ignored.
 
 [smile]
@@ -30,23 +31,23 @@ New here? I'll get you matching in just a few seconds. Also, thank you for the d
 
 [handsup] @toggle
 Installed apps
-These buttons let you swap between applications in the tangOS. Every download gives me fifty (50) food-pellets!
+These buttons let you swap between applications in the tangOS. :joke[Every download gives me fifty (50) food-pellets!]
 
 [smile] @mcp
 Turn on MCP
-Switch this ON so AIs can connect, then copy and send the prompt to your AI. My daily caloric intake is 100fp.
+Switch this ON so AIs can connect, then copy and send the prompt to your AI. :joke[My daily caloric intake is 100fp.]
 
 [thinking] @settings
 Keys and GitHub login
-You can also add API keys here, all keys are stored locally and never fully shown. My current food-pellet inventory is: four hundred and thirty (430) food-pellets.
+You can also add API keys here, all keys are stored locally and never fully shown. :joke[My current food-pellet inventory is: four hundred and thirty (430) food-pellets.]
 
 [smile] @controller
 Your AI crew
-This is where you control all of your AIs and track their stats. One food pellet is equal to one one hundredth (.01) of a(n) fp (pronounced ef-pee).
+This is where you control all of your AIs and track their stats. :joke[One food pellet is equal to one one hundredth (.01) of a(n) fp (pronounced ef-pee).]
 
 [tongue] @controller
 First batch
-Hit "Assign 16" on a box to hand it 16 similar functions, after a bit of loading, hit drive. If I do not meet my daily caloric intake nothing will happen.
+Hit "Assign 16" on a box to hand it 16 similar functions, after a bit of loading, hit drive. :joke[If I do not meet my daily caloric intake nothing will happen.]
 
 [smile] @policies
 Safety toggles

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { X, ChevronLeft, ChevronRight, Pencil } from 'lucide-react'
 import { frame } from '../tangoFrames'
+import { richText } from '../richText'
 
 interface Tip {
   title: string
@@ -65,8 +66,8 @@ export default function TangoHelper({ firstRun }: { firstRun: boolean }): JSX.El
               </button>
             </div>
             <div className="tt-body">
-              <b>{tip?.title ?? 'Loading…'}</b>
-              <p>{tip?.body ?? ''}</p>
+              <b>{richText(tip?.title ?? 'Loading…')}</b>
+              <p>{richText(tip?.body ?? '')}</p>
             </div>
             {tips.length > 1 && (
               <div className="tt-nav">

@@ -916,6 +916,27 @@ html, body, #root { background: transparent !important; }
 }
 .tour-box-title { font-size: 15px; font-weight: 800; color: #1f3d10; margin-bottom: 5px; }
 .tour-box-body { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: #2c3d22; }
+
+/* :joke[...] inline markup in any Tango text box -> animated gradient of the current theme's
+   brand colors (primary -> accent -> primary), shimmering across the span. */
+.joke-text {
+  font-weight: 800;
+  background: linear-gradient(
+    90deg,
+    rgb(var(--aero-primary-rgb)),
+    rgb(var(--aero-accent-rgb)),
+    rgb(var(--aero-primary-rgb))
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: joke-shimmer 3.2s linear infinite;
+}
+@keyframes joke-shimmer {
+  to { background-position: 200% center; }
+}
 .tour-nav { display: flex; align-items: center; gap: 8px; }
 .tour-nav .aero-button { padding: 5px 14px; font-size: 12.5px; }
 
