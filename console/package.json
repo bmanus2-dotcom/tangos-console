@@ -1,6 +1,6 @@
 {
   "name": "console",
-  "version": "3.1.7",
+  "version": "3.1.8",
   "description": "tangOS Console — exposes a decomp repo's tools as an MCP server an AI connects to, with a live viewer.",
   "main": "./out/main/index.js",
   "author": "Brennen (Tango)",
@@ -63,7 +63,6 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "tangOS Console",
-      "include": "build/installer.nsh",
       "deleteAppDataOnUninstall": true
     }
   }
