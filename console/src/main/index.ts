@@ -1358,7 +1358,10 @@ async function enrichTarget(item: BatchItem): Promise<string | null> {
   const out = await new Promise<string>((resolve) => {
     let buf = ''
     try {
-      const c = spawn(py, ['tools/worklist.py', '--module', item.module!, '--addr', addr], {
+      // --max 0xffffff disables worklist.py's default 0x200 (512-byte) size filter: when we pin the
+      // exact function by --addr we want THAT function whatever its size, else every pick over 512
+      // bytes is silently dropped ("none of this batch's targets could be enriched").
+      const c = spawn(py, ['tools/worklist.py', '--module', item.module!, '--addr', addr, '--max', '0xffffff'], {
         cwd: repo,
         env: { ...process.env, ...secretsEnv() }
       })
