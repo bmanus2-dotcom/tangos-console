@@ -1401,6 +1401,13 @@ async function driveBatch(agentName: string): Promise<void> {
     driverEnv.GLM_API_KEY = env.ANTHROPIC_API_KEY // the driver reads GLM_API_KEY; point it at Anthropic
     driverEnv.GLM_BASE_URL = 'https://api.anthropic.com'
     driverEnv.GLM_MODEL = 'claude-sonnet-4-5'
+  } else if (agentName === 'DeepSeek') {
+    if (!env.DEEPSEEK_API_KEY) throw new Error('no DEEPSEEK_API_KEY stored - add it in Settings')
+    driverEnv.GLM_API_KEY = env.DEEPSEEK_API_KEY
+    driverEnv.GLM_BASE_URL = 'https://api.deepseek.com'
+    driverEnv.GLM_DIALECT = 'openai' // DeepSeek is OpenAI /chat/completions, not the Anthropic dialect
+    // the effort box picks the model: 'reasoner' = R1 (deepseek-reasoner), else V3 (deepseek-chat)
+    driverEnv.GLM_MODEL = agentEfforts['DeepSeek'] === 'reasoner' ? 'deepseek-reasoner' : 'deepseek-chat'
   } else {
     throw new Error(`${agentName} has no console driver yet (idle-only)`)
   }
@@ -1408,8 +1415,10 @@ async function driveBatch(agentName: string): Promise<void> {
   // to the provider's thinking knob (Claude budget vs GLM on/off) - see tools/glm_refine.py.
   const effortDefault: Record<string, string> = { Claude: 'high' }
   // GLM's refine driver emits code directly; extended thinking just eats its token budget and
-  // starves the code block (no code returned), so it's forced off - even over a stale saved choice.
-  driverEnv.TANGOS_EFFORT = agentName === 'GLM' ? 'off' : agentEfforts[agentName] ?? effortDefault[agentName] ?? ''
+  // starves the code block. GLM forces it off; DeepSeek picks the model by effort (chat vs reasoner)
+  // and the reasoner does its own thinking, so neither passes a thinking level to the driver.
+  driverEnv.TANGOS_EFFORT =
+    agentName === 'GLM' || agentName === 'DeepSeek' ? 'off' : agentEfforts[agentName] ?? effortDefault[agentName] ?? ''
   const batch = state.batches.find((b) => b.targetAgent === agentName && b.status !== 'done')
   if (!batch) throw new Error(`no batch assigned to ${agentName} - assign one first`)
   // Build the driver worklist with FULL context. Prefer coddog's preserved enriched row (from
