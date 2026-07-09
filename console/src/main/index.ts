@@ -349,11 +349,12 @@ function afterRun(
   })
   if (tool.id !== 'match') return
   const ok = res.status === 'ok' && outputIsMatch(res.output)
-  aiStats.recordMatch(client?.name, ok, parseHexish(values.size))
+  const func = typeof values.func === 'string' ? values.func : undefined
+  aiStats.recordMatch(client?.name, ok, parseHexish(values.size), func)
   if (!ok) {
-    // A non-match that compiled and produced a small real byte-diff is a near miss (progress).
-    const d = matchDivergence(res.output)
-    if (d != null && d >= 1 && d < 999) aiStats.recordNearMiss(client?.name)
+    // A non-match that compiled to a small real byte-diff is a near miss - but counted only when it
+    // IMPROVES the function's best divergence so far (the gate lives inside recordNearMiss).
+    aiStats.recordNearMiss(client?.name, func, matchDivergence(res.output))
   }
   if (ok && typeof values.func === 'string') markItemDone(values.func)
   // A verified match means the agent wrote a matching source; when Writes + Review + Push are on,
@@ -469,6 +470,7 @@ function saveSettings(): void {
         agentRoles,
         agentEfforts,
         agentStats: aiStats.serialize(),
+        agentBestDiv: aiStats.serializeBestDiv(),
         reportsEnabled: state.reportsEnabled,
         tourSeen: state.tourSeen,
         useAgents: state.useAgents,
@@ -486,6 +488,7 @@ function loadSettings(): {
   agentRoles?: Record<string, string | string[]> // string = legacy single-role format
   agentEfforts?: Record<string, string>
   agentStats?: Record<string, { totalMatches: number; matchAttempts: number }>
+  agentBestDiv?: Record<string, number>
   reportsEnabled?: boolean
   tourSeen?: boolean
   useAgents?: boolean
@@ -574,6 +577,7 @@ async function loadLiveDb(force: boolean): Promise<AtlasDb> {
     }
     const db = (await r.json()) as AtlasDb
     atlasCache = { ...atlasCache, repo: state.repoPath, live: db, liveAt: Date.now() }
+    aiStats.seedBestDiv(db.functions) // ground-truth near-miss baseline for the improvement gate
     return db
   } catch (e) {
     if (cached) return cached
@@ -678,7 +682,8 @@ function agentsSnapshot(): AiAgent[] {
       connected: true,
       sessions: list.length,
       currentBatchId: aiStats.currentBatchId(name),
-      stats: aiStats.statsFor(name)
+      stats: aiStats.statsFor(name),
+      run: aiStats.runStatsFor(name)
     })
   }
 
@@ -699,7 +704,8 @@ function agentsSnapshot(): AiAgent[] {
       effort: agentEfforts[provider],
       connected: apiDriving.has(provider),
       currentBatchId: aiStats.currentBatchId(provider),
-      stats: aiStats.statsFor(provider)
+      stats: aiStats.statsFor(provider),
+      run: aiStats.runStatsFor(provider)
     })
   }
 
@@ -712,7 +718,8 @@ function agentsSnapshot(): AiAgent[] {
       roles: agentRoles[name] ?? [],
       effort: agentEfforts[name],
       connected: false,
-      stats: aiStats.statsFor(name)
+      stats: aiStats.statsFor(name),
+      run: aiStats.runStatsFor(name)
     })
   }
 
@@ -952,6 +959,7 @@ async function regenAtlasDb(source: 'user' | 'ai'): Promise<AtlasDb | null> {
   })
   const db = readAtlas(state.repoPath, state.descriptor)
   atlasCache = { ...atlasCache, repo: state.repoPath, local: db }
+  if (db) aiStats.seedBestDiv(db.functions) // keep the near-miss gate's baseline current after a land
   return db
 }
 
@@ -1456,8 +1464,9 @@ async function driveBatch(agentName: string): Promise<void> {
       if (recorded.has(name)) continue
       recorded.add(name)
       const item = batch.items.find((i) => i.ref === name)
-      aiStats.recordMatch(agentName, ok, item?.size)
-      if (!ok) aiStats.recordNearMiss(agentName) // a div=N line: compiled draft, close but not matching
+      aiStats.recordMatch(agentName, ok, item?.size, name)
+      // a "div=N" line: compiled draft, close but not matching - counts only if it beats the best div
+      if (!ok) aiStats.recordNearMiss(agentName, name, Number(m[4].replace('div=', '')))
       if (ok && item) item.done = true
       aiStats.setCurrent(agentName, {
         task: batch.title,
@@ -1509,7 +1518,7 @@ async function driveBatch(agentName: string): Promise<void> {
         if (!r.name || recorded.has(r.name)) continue
         recorded.add(r.name)
         const item = batch.items.find((i) => i.ref === r.name)
-        aiStats.recordMatch(agentName, !!r.matched, item?.size)
+        aiStats.recordMatch(agentName, !!r.matched, item?.size, r.name)
         if (r.matched && item) item.done = true
       }
       tin = out.tokensIn ?? out.inputTokens ?? 0
@@ -1742,6 +1751,11 @@ ipcMain.handle('app:version', () => app.getVersion())
 // updater events that keep the top banner live while the app is open.
 ipcMain.handle('app:checkUpdate', () => checkForAppUpdate())
 ipcMain.handle('app:quitAndInstall', () => quitAndInstallUpdate())
+// Wipe all AI stats (all-time + current run + best-div history). onChange persists + pushes state.
+ipcMain.handle('stats:clearAll', () => {
+  aiStats.clearAll()
+  return true
+})
 ipcMain.handle('debug:dump', () => dumpDebug(mainWindow, fullState(), activityBus.snapshot()))
 ipcMain.handle('debug:open', async () => {
   await shell.openPath(debugDir())
@@ -2053,6 +2067,7 @@ app.whenReady().then(() => {
   )
   agentEfforts = { ...(saved.agentEfforts ?? {}) }
   aiStats.hydrate(saved.agentStats)
+  aiStats.hydrateBestDiv(saved.agentBestDiv)
   aiStats.remapKeys(normalizeName) // fold old per-model/per-session stat keys into one family box
   state.reportsEnabled = saved.reportsEnabled ?? false
   state.tourSeen = saved.tourSeen ?? false

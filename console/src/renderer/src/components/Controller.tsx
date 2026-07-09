@@ -78,6 +78,7 @@ export default function Controller({
   const [busy, setBusy] = useState<Record<string, string>>({}) // name -> loading label
   const [sizes, setSizes] = useState<Record<string, number>>({}) // name -> batch size (-1 = infinite)
   const [notice, setNotice] = useState<string | null>(null) // gentle info toast (e.g. "no work for this role")
+  const [statScope, setStatScope] = useState<'all' | 'run'>('all') // which tally the boxes show
 
   // Latest run per agent in a single pass (instead of filter+sort over all runs per agent on
   // every output chunk - that was quadratic during a long scan and made the view lag/drop).
@@ -160,6 +161,14 @@ export default function Controller({
           <ShoppingCart size={12} /> Pick in Viewer
         </button>
         <div style={{ flex: 1 }} />
+        <div className="stat-scope" title="Which tally the boxes show">
+          <button className={statScope === 'all' ? 'on' : ''} onClick={() => setStatScope('all')}>
+            All-time
+          </button>
+          <button className={statScope === 'run' ? 'on' : ''} onClick={() => setStatScope('run')}>
+            This run
+          </button>
+        </div>
         {mcpControl}
       </div>
 
@@ -172,9 +181,10 @@ export default function Controller({
         <div className="ctl-grid aero-scroll">
           {views.map(({ agent, batch, done, total, task, live, batchDone, liveLine }) => {
             const a = agent
+            const st = statScope === 'run' ? a.run ?? a.stats : a.stats // all-time vs this-run tally
             const col = aiColor(a.name)
             const pct = total ? Math.round((done / total) * 100) : 0
-            const hit = a.stats.matchAttempts ? Math.round(a.stats.hitRate * 100) : null
+            const hit = st.matchAttempts ? Math.round(st.hitRate * 100) : null
             // API providers are always available (we hold the key) - never grayed offline.
             const available = a.kind === 'api' || a.connected
             const state = live ? 'live' : available ? 'idle' : 'off'
@@ -210,7 +220,7 @@ export default function Controller({
                   {a.kind === 'api' && <span className="aib-kind">API</span>}
                   {isLooping && <span className="aib-kind loop" title="Running continuously">∞</span>}
                   <span className="aib-matches">
-                    {a.stats.totalMatches}
+                    {st.totalMatches}
                     <small> matched</small>
                   </span>
                   <button
@@ -246,8 +256,8 @@ export default function Controller({
 
                 <div className="aib-stats">
                   {hit != null && <span title="matches / match attempts">{hit}% hit</span>}
-                  <span title="near misses: compiled non-matches with a real byte-diff (close attempts / progress toward a match)">
-                    {a.stats.nearMisses ?? 0} near
+                  <span title="near misses: compiled non-matches that pushed a function's byte-diff lower than anyone had before (real progress; re-hitting the same divergence doesn't count)">
+                    {st.nearMisses ?? 0} near
                   </span>
                 </div>
 

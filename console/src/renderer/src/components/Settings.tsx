@@ -1,7 +1,33 @@
-import type { ReactNode } from 'react'
-import { FolderOpen, Bug, ChevronRight } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { FolderOpen, Bug, ChevronRight, Trash2 } from 'lucide-react'
 import type { RepoState } from '../../../shared/types'
 import KeyVault from './KeyVault'
+
+/** Clear-all-stats with an inline two-click confirm (no native dialog): the first click arms it,
+ *  a second within 4s wipes. Keeps a stray click from nuking every tally. */
+function ClearStatsButton(): JSX.Element {
+  const [armed, setArmed] = useState(false)
+  const [done, setDone] = useState(false)
+  return (
+    <button
+      className={`mini-btn${armed ? ' danger' : ''}`}
+      onClick={async () => {
+        if (!armed) {
+          setArmed(true)
+          window.setTimeout(() => setArmed(false), 4000)
+          return
+        }
+        await window.tangos.clearAllStats()
+        setArmed(false)
+        setDone(true)
+        window.setTimeout(() => setDone(false), 3000)
+      }}
+    >
+      <Trash2 size={12} style={{ verticalAlign: -2, marginRight: 4 }} />
+      {done ? 'Stats cleared' : armed ? 'Click again to confirm' : 'Clear all stats'}
+    </button>
+  )
+}
 
 /** Collapsible "info bubble" - keeps the settings panel compact by tucking each setting's long
  *  explanation behind a click. Collapsed by default. */
@@ -111,6 +137,13 @@ export default function Settings({
       <button className="mini-btn" onClick={() => window.tangos.replayTour()}>
         Replay Tango&apos;s tour
       </button>
+
+      <div className="section-title" style={{ marginTop: 14 }}>Stats</div>
+      <ClearStatsButton />
+      <Info>
+        Wipes every AI box&apos;s tallies - matches, hit rate, near misses, tokens, and the per-function
+        best-divergence history - for both all-time and this run. Can&apos;t be undone.
+      </Info>
 
       <div className="section-title" style={{ marginTop: 14 }}>Debug reports</div>
       <label className="settings-check">

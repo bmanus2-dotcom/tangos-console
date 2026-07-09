@@ -311,7 +311,8 @@ export interface AiAgent {
   sessions?: number // mcp: number of live sessions collapsed under this name
   currentBatchId?: string
   lastSeen?: number
-  stats: AiStats
+  stats: AiStats // all-time tallies
+  run?: AiStats // current-run-only tallies (zeroed each app launch)
 }
 
 // ---- Atlas (Chaos Viewer) data ---------------------------------------------

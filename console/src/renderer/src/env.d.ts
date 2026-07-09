@@ -68,6 +68,7 @@ export interface TangosApi {
   getTips(): Promise<{ title: string; body: string }[]>
   openTips(): Promise<boolean>
   appVersion(): Promise<string>
+  clearAllStats(): Promise<boolean>
   checkAppUpdate(): Promise<AppUpdateInfo>
   quitAndInstall(): Promise<void>
   onAppUpdate(cb: (info: AppUpdateInfo) => void): () => void

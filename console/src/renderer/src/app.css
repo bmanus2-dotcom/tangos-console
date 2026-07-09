@@ -1081,6 +1081,15 @@ html, body, #root { background: transparent !important; }
 .repo-warn.ok { color: #14532d; background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.5); }
 /* "a newer app release is out" - violet, distinct from the repo-staleness blue */
 .repo-warn.update { color: #4c1d95; background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.5); }
+/* Controller header: all-time vs this-run stat toggle */
+.stat-scope { display: inline-flex; border: 1px solid var(--aero-border); border-radius: 999px; overflow: hidden; margin-right: 8px; }
+.stat-scope button {
+  border: none; background: transparent; cursor: pointer; font-size: 11px; font-weight: 600;
+  padding: 3px 10px; color: var(--aero-muted); white-space: nowrap;
+}
+.stat-scope button.on { background: rgba(14,165,233,0.9); color: #fff; }
+/* armed "Clear all stats" confirm */
+.mini-btn.danger { background: rgba(220,38,38,0.15); border-color: rgba(220,38,38,0.6); color: #b91c1c; }
 /* "you have unpublished commits" - quiet neutral FYI, deliberately NOT a warning: publishing is
    optional and must never look like it's blocking the separate Update above it. */
 .repo-warn.unpushed { color: #475569; background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.28); }

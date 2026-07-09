@@ -55,48 +55,61 @@ export function matchDivergence(output: string): number | null {
 }
 
 class AiStatsStore {
-  private store = new Map<string, Persisted>()
+  private store = new Map<string, Persisted>() // all-time tallies (persisted)
+  private session = new Map<string, Persisted>() // current run only (in-memory, zeroed at launch)
   private current = new Map<string, Current>()
+  private bestDiv = new Map<string, number>() // best (lowest) divergence ever seen per function
   onChange?: () => void
 
-  private raw(name: string): Persisted {
-    let s = this.store.get(name)
+  private rawIn(map: Map<string, Persisted>, name: string): Persisted {
+    let s = map.get(name)
     if (!s) {
       s = { totalMatches: 0, matchAttempts: 0 }
-      this.store.set(name, s)
+      map.set(name, s)
     }
     return s
   }
+  /** The all-time AND current-run tallies for a name - every record updates both. */
+  private scopes(name: string): Persisted[] {
+    return [this.rawIn(this.store, name), this.rawIn(this.session, name)]
+  }
 
-  recordMatch(name: string | undefined, ok: boolean, size?: number): void {
+  recordMatch(name: string | undefined, ok: boolean, size?: number, func?: string): void {
     if (!name) return
-    const s = this.raw(name)
-    s.matchAttempts++
-    if (ok) s.totalMatches++
-    const b = bucketFor(size)
-    if (b) {
-      s.bySize ??= {}
-      const t = (s.bySize[b] ??= { attempts: 0, matches: 0 })
-      t.attempts++
-      if (ok) t.matches++
+    for (const s of this.scopes(name)) {
+      s.matchAttempts++
+      if (ok) s.totalMatches++
+      const b = bucketFor(size)
+      if (b) {
+        s.bySize ??= {}
+        const t = (s.bySize[b] ??= { attempts: 0, matches: 0 })
+        t.attempts++
+        if (ok) t.matches++
+      }
     }
+    if (ok && func) this.bestDiv.set(func, 0) // a byte match is divergence 0 - the best possible
     this.onChange?.()
   }
 
-  /** A non-matching but close attempt (compiled + produced a real byte-diff). Separate from
-   *  matchAttempts, which recordMatch already bumps for the same run. */
-  recordNearMiss(name: string | undefined): void {
-    if (!name) return
-    const s = this.raw(name)
-    s.nearMisses = (s.nearMisses ?? 0) + 1
+  /** A closer near-miss. Counts ONLY when it IMPROVES the function's best divergence so far -
+   *  re-hitting the same div (or worse) is not progress and must not inflate the tally. bestDiv is
+   *  global per function (across agents + sessions), so the win credits whoever pushed it lower.
+   *  Separate from matchAttempts, which recordMatch already bumps for the same run. */
+  recordNearMiss(name: string | undefined, func: string | undefined, div: number | null): void {
+    if (!name || !func || div == null || div < 1 || div >= 999) return
+    const prev = this.bestDiv.get(func) ?? Infinity
+    if (div >= prev) return // no improvement over the best already seen - not a win
+    this.bestDiv.set(func, div)
+    for (const s of this.scopes(name)) s.nearMisses = (s.nearMisses ?? 0) + 1
     this.onChange?.()
   }
 
   recordTokens(name: string | undefined, tokensIn: number, tokensOut: number): void {
     if (!name) return
-    const s = this.raw(name)
-    s.tokensIn = (s.tokensIn ?? 0) + (tokensIn || 0)
-    s.tokensOut = (s.tokensOut ?? 0) + (tokensOut || 0)
+    for (const s of this.scopes(name)) {
+      s.tokensIn = (s.tokensIn ?? 0) + (tokensIn || 0)
+      s.tokensOut = (s.tokensOut ?? 0) + (tokensOut || 0)
+    }
     this.onChange?.()
   }
 
@@ -110,10 +123,8 @@ class AiStatsStore {
     if (this.current.delete(name)) this.onChange?.()
   }
 
-  /** Full stats for one AI, merging lifetime tallies with the live current-task fields. */
-  statsFor(name: string): AiStats {
-    const s = this.store.get(name) ?? { totalMatches: 0, matchAttempts: 0 }
-    const cur = this.current.get(name)
+  private statsFrom(s: Persisted | undefined, cur: Current | undefined): AiStats {
+    s ??= { totalMatches: 0, matchAttempts: 0 }
     const totalTokens = (s.tokensIn ?? 0) + (s.tokensOut ?? 0)
     return {
       totalMatches: s.totalMatches,
@@ -127,6 +138,14 @@ class AiStatsStore {
       progress: cur?.progress,
       bySize: s.bySize
     }
+  }
+  /** All-time stats for one AI, merged with the live current-task fields. */
+  statsFor(name: string): AiStats {
+    return this.statsFrom(this.store.get(name), this.current.get(name))
+  }
+  /** Current-run-only stats (zeroed at launch); the live task/progress fields still ride along. */
+  runStatsFor(name: string): AiStats {
+    return this.statsFrom(this.session.get(name), this.current.get(name))
   }
 
   /** Every name we have lifetime stats for (persisted boxes survive disconnect). */
@@ -176,6 +195,36 @@ class AiStatsStore {
     for (const [name, s] of Object.entries(data)) {
       if (s && typeof s.totalMatches === 'number') this.store.set(name, s)
     }
+  }
+
+  /** Wipe every tally (all-time + current run) and the per-function best-div history. */
+  clearAll(): void {
+    this.store.clear()
+    this.session.clear()
+    this.bestDiv.clear()
+    this.onChange?.()
+  }
+
+  /** Seed per-function best-divergence from ground truth (the chaos-db/atlas near-miss data), so the
+   *  near-miss gate respects divergences reached before this console ever observed them - e.g. a
+   *  function already sitting at div 3 in the pool. Only LOWERS a known best, never raises it, so a
+   *  fresher observed improvement is never clobbered by stale atlas data. */
+  seedBestDiv(fns: Array<{ name: string; div?: number; matched?: boolean }>): void {
+    for (const f of fns) {
+      if (!f.name) continue
+      const d = f.matched ? 0 : typeof f.div === 'number' && f.div >= 1 && f.div < 999 ? f.div : null
+      if (d == null) continue
+      const prev = this.bestDiv.get(f.name)
+      if (prev == null || d < prev) this.bestDiv.set(f.name, d)
+    }
+  }
+
+  serializeBestDiv(): Record<string, number> {
+    return Object.fromEntries(this.bestDiv)
+  }
+  hydrateBestDiv(data?: Record<string, number>): void {
+    if (!data) return
+    for (const [k, v] of Object.entries(data)) if (typeof v === 'number') this.bestDiv.set(k, v)
   }
 }
 

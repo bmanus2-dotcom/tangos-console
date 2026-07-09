@@ -87,6 +87,7 @@ const api = {
   getTips: (): Promise<{ title: string; body: string }[]> => ipcRenderer.invoke('tips:get'),
   openTips: (): Promise<boolean> => ipcRenderer.invoke('tips:open'),
   appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
+  clearAllStats: (): Promise<boolean> => ipcRenderer.invoke('stats:clearAll'),
   checkAppUpdate: (): Promise<AppUpdateInfo> => ipcRenderer.invoke('app:checkUpdate'),
   quitAndInstall: (): Promise<void> => ipcRenderer.invoke('app:quitAndInstall'),
   onAppUpdate: (cb: (info: AppUpdateInfo) => void): (() => void) => {
