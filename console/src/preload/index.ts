@@ -123,6 +123,7 @@ const api = {
   setAutoLand: (on: boolean): Promise<boolean> => ipcRenderer.invoke('policy:setAutoLand', on),
   setAutoPush: (on: boolean): Promise<boolean> => ipcRenderer.invoke('policy:setAutoPush', on),
   removeBatch: (id: string): Promise<Batch[]> => ipcRenderer.invoke('batch:remove', id),
+  clearQueue: (agentName: string): Promise<Batch[]> => ipcRenderer.invoke('batch:clearQueue', agentName),
   reorderBatch: (id: string, dir: 'up' | 'down'): Promise<Batch[]> =>
     ipcRenderer.invoke('batch:reorder', { id, dir }),
   clearDoneBatches: (): Promise<Batch[]> => ipcRenderer.invoke('batch:clearDone'),

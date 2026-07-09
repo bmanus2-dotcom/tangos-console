@@ -40,6 +40,8 @@ export interface AgentView {
   live: boolean // has a currently-running tool
   batchDone: boolean // its latest batch has finished
   liveLine: string // latest streaming output line (so you can watch it work)
+  queueRemaining: number // unfinished functions across this agent's pending batches
+  queuedBatches: number // batches waiting (not yet active)
 }
 
 export default function Controller({
@@ -101,13 +103,18 @@ export default function Controller({
       const done = batch ? batch.items.filter((i) => i.done).length : 0
       const total = batch ? batch.items.length : 0
       const batchDone = batch?.status === 'done'
+      // The agent's QUEUE: everything not yet worked through. queueRemaining counts unfinished
+      // functions across those batches - the "how much work is lined up" number in the header.
+      const queue = batches.filter((b) => b.targetAgent === agent.name && b.status !== 'done')
+      const queueRemaining = queue.reduce((n, b) => n + b.items.filter((i) => !i.done).length, 0)
+      const queuedBatches = queue.filter((b) => b.status === 'queued').length
       const latest = latestByName.get(agent.name)
       const live = !!latest && latest.status === 'running'
       const task = agent.stats.currentTask ?? batch?.title ?? latest?.label
       // Keep the last line up between functions (don't blank when a run finishes) so the box
       // doesn't visibly reset after every function during a scan.
       const liveLine = latest?.output ? lastLine(latest.output) : ''
-      return { agent, batch, done, total, task, live, batchDone, liveLine }
+      return { agent, batch, done, total, task, live, batchDone, liveLine, queueRemaining, queuedBatches }
     })
   }, [agents, latestByName, batches])
 
@@ -179,7 +186,7 @@ export default function Controller({
         </div>
       ) : (
         <div className="ctl-grid aero-scroll">
-          {views.map(({ agent, batch, done, total, task, live, batchDone, liveLine }) => {
+          {views.map(({ agent, batch, done, total, task, live, batchDone, liveLine, queueRemaining, queuedBatches }) => {
             const a = agent
             const st = statScope === 'run' ? a.run ?? a.stats : a.stats // all-time vs this-run tally
             const col = aiColor(a.name)
@@ -192,7 +199,8 @@ export default function Controller({
             // Actively running its API driver right now (a.connected = apiDriving on the main side;
             // busy covers the click->spawn gap). Drive flips to a red Stop while this is true.
             const driving = a.kind === 'api' && (a.connected || busy[a.name] === 'Driving')
-            const canDrive = a.kind === 'api' && !!batch && !batchDone && !isLooping && !driving && !busy[a.name] && !live
+            // Drive appears once there's anything in the queue; it walks the WHOLE queue.
+            const canDrive = a.kind === 'api' && queueRemaining > 0 && !isLooping && !driving && !busy[a.name] && !live
             const generating = busy[a.name] === 'Generating batch'
             const rawSize = sizes[a.name] // undefined = empty (use recommended); -1 = loop
             const loopSel = rawSize === -1
@@ -218,7 +226,24 @@ export default function Controller({
                     {a.name}
                   </span>
                   {a.kind === 'api' && <span className="aib-kind">API</span>}
-                  {isLooping && <span className="aib-kind loop" title="Running continuously">∞</span>}
+                  {isLooping && <span className="aib-kind loop" title="Pulling batches continuously">∞</span>}
+                  {queueRemaining > 0 && (
+                    <span
+                      className="aib-queue"
+                      title={`${queueRemaining} function(s) lined up for this AI to pull${queuedBatches ? ` (${queuedBatches} batch(es) waiting)` : ' (in the batch being worked now)'}`}
+                    >
+                      {queueRemaining} in queue
+                      {queuedBatches > 0 && (
+                        <button
+                          className="aib-queue-clear"
+                          title="Clear the queue (waiting batches only - a batch being worked isn't touched)"
+                          onClick={() => window.tangos.clearQueue(a.name)}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  )}
                   <span className="aib-matches">
                     {st.totalMatches}
                     <small> matched</small>
@@ -332,7 +357,7 @@ export default function Controller({
                     />
                     <button
                       className={`aib-loop${loopSel ? ' on' : ''}`}
-                      title={loopSel ? 'Stop looping - run a single batch' : 'Run continuously: keep pulling recommended-size batches until stopped'}
+                      title={loopSel ? 'Switch back to one-shot: queue up a set amount instead' : 'Continuous: this AI keeps pulling fresh batches from its queue until you stop it'}
                       onClick={() =>
                         setSizes((s) => {
                           const next = { ...s }
@@ -344,27 +369,44 @@ export default function Controller({
                     >
                       ∞
                     </button>
-                    <button className="mini-btn" disabled={generating} onClick={() => assign(a.name, a.roles[0])} title="Generate a role-fit batch of this size and assign it">
-                      <Sparkles size={12} /> Recommended
+                    <button
+                      className="mini-btn"
+                      disabled={generating}
+                      onClick={() => assign(a.name, a.roles[0])}
+                      title={
+                        loopSel
+                          ? 'Start continuous mode: this AI keeps pulling recommended batches from its queue until stopped'
+                          : 'Generate a role-fit batch of this size and add it to the queue - press again to line up more'
+                      }
+                    >
+                      <Sparkles size={12} /> {loopSel ? 'Start pulling' : 'Add to queue'}
                     </button>
-                    {driving || isLooping ? (
-                      <button
-                        className="mini-btn stop"
-                        onClick={() => window.tangos.stopAi(a.name)}
-                        title={driving ? 'Stop this run early - keeps the matches found so far and prints results' : 'Stop the continuous loop'}
-                      >
-                        <Square size={12} /> Stop
-                      </button>
-                    ) : canDrive ? (
-                      <button className="mini-btn go" onClick={() => drive(a.name)} title="Run this AI on its batch via its API key">
-                        <Play size={12} /> Drive
-                      </button>
-                    ) : null}
                   </div>
                   {cartCount > 0 && (
-                    <button className="mini-btn custom" onClick={() => onAssignCart(a.name)} title="Assign your hand-picked cart to this AI">
-                      <ShoppingCart size={12} /> Assign custom ({cartCount})
+                    <button className="mini-btn custom" onClick={() => onAssignCart(a.name)} title="Add the functions you picked in the Chaos Viewer to this AI's queue">
+                      <ShoppingCart size={12} /> Add chosen functions ({cartCount})
                     </button>
+                  )}
+                  {(driving || isLooping || canDrive) && (
+                    <div className="aib-drive-row">
+                      {driving || isLooping ? (
+                        <button
+                          className="mini-btn stop"
+                          onClick={() => window.tangos.stopAi(a.name)}
+                          title={driving ? 'Stop - finishes nothing further; matches found so far are kept' : 'Stop pulling batches'}
+                        >
+                          <Square size={12} /> Stop
+                        </button>
+                      ) : (
+                        <button
+                          className="mini-btn go"
+                          onClick={() => drive(a.name)}
+                          title={`Work through the queue (${queueRemaining} function${queueRemaining === 1 ? '' : 's'}) via this AI's API key`}
+                        >
+                          <Play size={12} /> Drive queue ({queueRemaining})
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

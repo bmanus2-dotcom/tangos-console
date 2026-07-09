@@ -1343,9 +1343,18 @@ ipcMain.handle('ai:assign', async (_e, p: { agent: string; role?: string; count:
 // Stop an AI's continuous loop (it finishes its current batch, then no more are queued).
 ipcMain.handle('ai:stop', (_e, agentName: string) => {
   agentLoop.delete(agentName) // stop any continuous loop from re-assigning
+  driveStopRequested.add(agentName) // end the queue walk after the current batch is killed below
   driveKills.get(agentName)?.() // kill an in-flight driver early; matches found so far are kept
   pushState()
   return true
+})
+
+// Empty an agent's queue: drop its QUEUED batches (an actively-driving batch is untouched - Stop
+// handles that). The functions inside become assignable again (genDraft's taken-set frees up).
+ipcMain.handle('batch:clearQueue', (_e, agentName: string) => {
+  state.batches = state.batches.filter((b) => !(b.targetAgent === agentName && b.status === 'queued'))
+  pushState()
+  return state.batches
 })
 
 /** Fetch one target's full enriched worklist row (disasm/callees/pool) via `worklist --addr`, for
@@ -1643,21 +1652,30 @@ async function driveBatch(agentName: string): Promise<void> {
 // first await, so a near-simultaneous second start no-ops instead of double-walking the worklist -
 // the "two 6/14s" symptom).
 const driveLoopActive = new Set<string>()
+const driveStopRequested = new Set<string>() // Stop ends the whole queue walk, not just the current batch
 async function startDriveLoop(agentName: string): Promise<void> {
   if (driveLoopActive.has(agentName) || apiDriving.has(agentName)) return
   driveLoopActive.add(agentName)
+  driveStopRequested.delete(agentName)
   try {
-    do {
+    for (;;) {
+      // Queue model: drive works through EVERYTHING queued for this agent, batch after batch.
+      // Infinite mode additionally refills the queue when it runs dry; one-shot mode just stops.
+      const pending = state.batches.some((b) => b.targetAgent === agentName && b.status !== 'done')
+      if (!pending) {
+        if (!agentLoop.has(agentName) || driveStopRequested.has(agentName)) break
+        const primary = agentRoles[agentName]?.[0]
+        await assignToAgent(agentName, primary ?? 'Unassigned', roleBatchSize(primary), true)
+      }
       await driveBatch(agentName)
-      if (!agentLoop.has(agentName)) break
-      const primary = agentRoles[agentName]?.[0]
-      await assignToAgent(agentName, primary ?? 'Unassigned', roleBatchSize(primary), true)
-    } while (agentLoop.has(agentName))
+      if (driveStopRequested.has(agentName)) break
+    }
   } catch (e) {
     agentLoop.delete(agentName) // stop the loop on any error
     throw e
   } finally {
     driveLoopActive.delete(agentName)
+    driveStopRequested.delete(agentName)
   }
 }
 
