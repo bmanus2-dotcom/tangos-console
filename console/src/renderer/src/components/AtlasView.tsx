@@ -34,9 +34,16 @@ export default function AtlasView({
   const [showNearMiss, setShowNearMiss] = useState(true)
   const [selectedFn, setSelectedFn] = useState<AtlasFunction | null>(null)
   const [gh, setGh] = useState<GithubCredits | null>(null)
+  const [recentStems, setRecentStems] = useState<Set<string>>(new Set()) // fn names matched in last 24h
 
   useEffect(() => {
     window.tangos.githubCredits().then(setGh).catch(() => {})
+    let alive = true
+    // functions matched (src added to origin/main) in the last 24h - drives the green ▲ per contributor
+    window.tangos.recentAdds(24).then((s) => alive && setRecentStems(new Set(s))).catch(() => {})
+    return () => {
+      alive = false
+    }
   }, [])
 
   // data-file author key -> canonical GitHub login (dedups an email-derived key vs the GitHub login, etc.)
@@ -55,6 +62,18 @@ export default function AtlasView({
     for (const p of gh?.prAuthors ?? []) if (!m.has(p)) m.set(p, 0)
     return m
   }, [db, gh, keyToLogin])
+
+  // matched-in-the-last-24h count per canonical login (the green ▲ badge in the legend)
+  const recentByLogin = useMemo(() => {
+    const m = new Map<string, number>()
+    if (db && recentStems.size) for (const f of db.functions) {
+      if (!f.matched || !f.author || !recentStems.has(f.name)) continue
+      const login = keyToLogin.get(f.author) ?? f.author
+      if (/\[bot\]$/i.test(login)) continue
+      m.set(login, (m.get(login) ?? 0) + 1)
+    }
+    return m
+  }, [db, recentStems, keyToLogin])
 
   const authorColors = useMemo(() => {
     const out = new Map<string, string>()
@@ -203,6 +222,11 @@ export default function AtlasView({
               >
                 <span className="cdot" style={{ background: authorColors.get(name) ?? '#8896a5' }} />
                 {name} <b>{n.toLocaleString()}</b>
+                {(recentByLogin.get(name) ?? 0) > 0 && (
+                  <span className="contrib-recent" title={`${recentByLogin.get(name)} matched in the last 24h`}>
+                    ▲{recentByLogin.get(name)}
+                  </span>
+                )}
               </button>
             ))}
             {authorFilter && (

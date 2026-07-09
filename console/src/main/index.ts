@@ -25,7 +25,8 @@ import {
   mergeWorkBranch, discardWorkBranch, WORK_BRANCH,
   remoteSlug, defaultBranch, currentBranch,
   pushSubsetToBranch, changedSrcFiles,
-  isDirty, aheadBehind, unmergedAhead, fetchRemote, rebasePull, pushToBranch, gitUserName
+  isDirty, aheadBehind, unmergedAhead, fetchRemote, rebasePull, pushToBranch, gitUserName,
+  recentlyAddedSrc
 } from './gitsafe'
 import { ensurePullRequest, resolvePushTarget, type PushTarget } from './pullRequests'
 import { writeBugReport } from './bugReport'
@@ -935,6 +936,18 @@ ipcMain.handle('atlas:current', () => {
 })
 
 ipcMain.handle('atlas:loadLive', (_e, force?: boolean) => loadLiveDb(!!force))
+
+// Function names matched (src file added to origin/main) within the last `sinceHours` (default 24),
+// for the contributors legend's "recent activity" badge. Best-effort: [] when not a git checkout.
+ipcMain.handle('atlas:recentAdds', async (_e, sinceHours?: number): Promise<string[]> => {
+  const repo = state.repoPath
+  if (!repo || !(await isGitRepo(repo))) return []
+  try {
+    return await recentlyAddedSrc(repo, await defaultBranch(repo), sinceHours ?? 24)
+  } catch {
+    return []
+  }
+})
 
 // Regenerate the local Atlas DB (chaos-db.json) from the current repo state and refresh the cache,
 // so the Atlas AND the near-miss/refine pool reflect what's actually in src/ now. Best-effort.

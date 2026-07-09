@@ -1093,6 +1093,8 @@ html, body, #root { background: transparent !important; }
 .aid-scope .stat-scope { margin-right: 0; }
 /* armed "Clear all stats" confirm */
 .mini-btn.danger { background: rgba(220,38,38,0.15); border-color: rgba(220,38,38,0.6); color: #b91c1c; }
+/* contributors legend: green ▲ + count matched in the last 24h */
+.contrib-recent { margin-left: 4px; font-size: 10px; font-weight: 700; color: #16a34a; letter-spacing: -0.5px; }
 /* "you have unpublished commits" - quiet neutral FYI, deliberately NOT a warning: publishing is
    optional and must never look like it's blocking the separate Update above it. */
 .repo-warn.unpushed { color: #475569; background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.28); }

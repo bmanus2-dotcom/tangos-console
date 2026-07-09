@@ -33,6 +33,7 @@ const api = {
   atlasLoadLive: (force?: boolean): Promise<AtlasDb | null> => ipcRenderer.invoke('atlas:loadLive', force),
   atlasCurrent: (): Promise<AtlasDb | null> => ipcRenderer.invoke('atlas:current'),
   atlasGenerate: (): Promise<AtlasDb | null> => ipcRenderer.invoke('atlas:generate'),
+  recentAdds: (sinceHours?: number): Promise<string[]> => ipcRenderer.invoke('atlas:recentAdds', sinceHours),
   openModulePopout: (module: string): Promise<void> => ipcRenderer.invoke('atlas:popout', module),
   addDraftItem: (item: BatchItem): Promise<void> => ipcRenderer.invoke('draft:addItem', item),
   onDraftAdd: (cb: (item: BatchItem) => void): (() => void) => {

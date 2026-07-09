@@ -40,6 +40,7 @@ export interface TangosApi {
   atlasLoadLive(force?: boolean): Promise<AtlasDb | null>
   atlasCurrent(): Promise<AtlasDb | null>
   atlasGenerate(): Promise<AtlasDb | null>
+  recentAdds(sinceHours?: number): Promise<string[]>
   openModulePopout(module: string): Promise<void>
   addDraftItem(item: BatchItem): Promise<void>
   onDraftAdd(cb: (item: BatchItem) => void): () => void
