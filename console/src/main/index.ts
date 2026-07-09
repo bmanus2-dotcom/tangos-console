@@ -284,12 +284,17 @@ async function runAutoPush(slug: string): Promise<void> {
     if (!target.ok || !target.slug) {
       return set({ state: 'error', message: `can't push: ${target.error ?? 'no push target'}` })
     }
+    // Stamp the pushing build's version into the commit and PR so a bad auto-PR can be traced
+    // to "someone on an old Console" at a glance. The commit message is re-stamped on every
+    // flush (the branch is a single force-pushed squash), so it always names the build that
+    // pushed the current tree - even if the app updates mid-session after the PR opened.
+    const consoleVer = `${app.getVersion()}${app.isPackaged ? '' : '-dev'}`
     const pushed = await pushSubsetToBranch(
       state.repoPath,
       branch,
       base,
       ship,
-      `tangos(${slug}): matched work`,
+      `tangos(${slug}): matched work [tangOS Console v${consoleVer}]`,
       target.slug,
       token
     )
@@ -304,12 +309,12 @@ async function runAutoPush(slug: string): Promise<void> {
       token,
       headOwner: target.headOwner,
       title: `tangos/${slug}: matched functions (${SESSION_TAG})`,
-      body: `Automated per-agent PR from tangOS Console${target.isFork ? ` (from fork \`${target.slug.owner}/${target.slug.repo}\`)` : ''} - matched functions from **${slug}** this session. CI validation + your review gate the merge.`
+      body: `Automated per-agent PR from tangOS Console${target.isFork ? ` (from fork \`${target.slug.owner}/${target.slug.repo}\`)` : ''} - matched functions from **${slug}** this session. CI validation + your review gate the merge.\n\nPushed from **tangOS Console v${consoleVer}** (each push re-stamps the commit message with the build that made it).`
     })
     if (!pr.ok) return set({ state: 'error', message: `pushed, but PR failed: ${pr.error}`, prUrl: undefined })
     set({ state: 'ok', message: `${slug}: ${pr.created ? 'opened' : 'updated'} PR`, prUrl: pr.url })
     report('autopush', {
-      agent: slug, branch, base, files: ship.length,
+      agent: slug, branch, base, files: ship.length, consoleVersion: consoleVer,
       skippedUpstream: landedUpstream, heldStale, prUrl: pr.url, created: pr.created
     })
   } catch (e) {
