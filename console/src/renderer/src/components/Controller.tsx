@@ -166,7 +166,7 @@ export default function Controller({
             All-time
           </button>
           <button className={statScope === 'run' ? 'on' : ''} onClick={() => setStatScope('run')}>
-            This run
+            This session
           </button>
         </div>
         {mcpControl}

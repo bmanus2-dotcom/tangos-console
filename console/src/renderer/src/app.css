@@ -1088,6 +1088,9 @@ html, body, #root { background: transparent !important; }
   padding: 3px 10px; color: var(--aero-muted); white-space: nowrap;
 }
 .stat-scope button.on { background: rgba(14,165,233,0.9); color: #fff; }
+/* stat-scope toggle inside the AiDetail popup, above the stat tiles */
+.aid-scope { display: flex; justify-content: flex-end; margin: 2px 0 8px; }
+.aid-scope .stat-scope { margin-right: 0; }
 /* armed "Clear all stats" confirm */
 .mini-btn.danger { background: rgba(220,38,38,0.15); border-color: rgba(220,38,38,0.6); color: #b91c1c; }
 /* "you have unpublished commits" - quiet neutral FYI, deliberately NOT a warning: publishing is

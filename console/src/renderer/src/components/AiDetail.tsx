@@ -84,8 +84,9 @@ export default function AiDetail({
     for (const r of mine) m.set(r.toolId, (m.get(r.toolId) ?? 0) + 1)
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [mine])
-  const s = agent.stats
-  const rec = recommendRole(agent)
+  const [scope, setScope] = useState<'all' | 'run'>('all')
+  const s = scope === 'run' ? agent.run ?? agent.stats : agent.stats
+  const rec = recommendRole(agent) // aptitude recommendation stays all-time (needs the full history)
   const running = mine.find((r) => r.status === 'running')
   // Fall back to the most recent run so the live pane PERSISTS between an MCP agent's tool calls.
   // Each call finishes in a flash and the agent then thinks, so keying only on 'running' means the
@@ -117,6 +118,17 @@ export default function AiDetail({
           <span className="aid-rec-why">- {rec.why}</span>
         </div>
 
+        <div className="aid-scope">
+          <div className="stat-scope" title="Which tally these numbers show">
+            <button className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>
+              All-time
+            </button>
+            <button className={scope === 'run' ? 'on' : ''} onClick={() => setScope('run')}>
+              This session
+            </button>
+          </div>
+        </div>
+
         <div className="aid-grid">
           <div className="aid-stat">
             <b>{s.totalMatches}</b>
@@ -130,7 +142,7 @@ export default function AiDetail({
             <b>{s.matchAttempts}</b>
             <span>attempts</span>
           </div>
-          <div className="aid-stat" title="compiled non-matches with a real byte-diff (close attempts)">
+          <div className="aid-stat" title="compiled non-matches that pushed a function's byte-diff lower than ever before (real progress; re-hitting the same divergence doesn't count)">
             <b>{(s.nearMisses ?? 0).toLocaleString()}</b>
             <span>near misses</span>
           </div>
