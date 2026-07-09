@@ -214,6 +214,20 @@ export async function rebasePull(
   const f = await git(repo, ['fetch', '--quiet', 'origin', branch])
   if (f.code !== 0) return { ok: false, err: (f.err || f.out).trim() || 'fetch failed' }
 
+  // Self-heal a broken half-state from a PRIOR update that conflicted and aborted messily: it can
+  // leave the index with unmerged (conflict) entries and no active rebase, which then wedges EVERY
+  // future update at the autostash step ("Cannot save the current index state / Cannot autostash").
+  // Abort any lingering rebase/merge, then reset the still-conflicted paths to HEAD - conflict stages
+  // aren't user work, and these are typically generated files (e.g. contributions.json) that get
+  // their real content from the rebase below anyway.
+  await git(repo, ['rebase', '--abort']) // no-op (nonzero) if no rebase is active
+  await git(repo, ['merge', '--abort']) // no-op (nonzero) if no merge is active
+  const unmerged = (await git(repo, ['ls-files', '--unmerged'])).out.trim()
+  if (unmerged) {
+    const paths = [...new Set(unmerged.split('\n').map((l) => l.split('\t').pop()).filter(Boolean))]
+    for (const p of paths) await git(repo, ['checkout', 'HEAD', '--', p as string])
+  }
+
   // Find untracked files that collide with a path arriving from upstream (those block the checkout).
   // One ls-tree yields every upstream path + its blob OID, so we intersect in memory and only touch
   // the real collisions - no git subprocess per untracked file (a big repo has hundreds, and that
