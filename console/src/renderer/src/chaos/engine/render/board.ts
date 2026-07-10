@@ -46,6 +46,9 @@ export function paintBoard(
   const projY = (wy: number): number => Math.round(((wy - cam.y) * cam.z + cam.vh / 2 + ovY) * dpr)
   const idx = world.query(view, scratch).slice()
   const colors = v.theme.colors
+  // world-locked ground under the board so module insets never show the panel glass
+  c.fillStyle = colors.ground
+  c.fillRect(projX(0), projY(0), projX(world.w) - projX(0), projY(world.h) - projY(0))
   for (const i of idx) {
     const n = world.fns[i]
     const x0 = projX(n.x)

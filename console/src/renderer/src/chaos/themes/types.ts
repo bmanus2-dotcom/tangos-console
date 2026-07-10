@@ -12,6 +12,9 @@ export interface ThemeColors {
   moduleStroke: string
   selection: string
   background: string
+  /** Painted under the tiles across the world bounds so the gaps between tiles
+   *  show a stable, world-locked tone instead of the screen-fixed panel glass. */
+  ground: string
 }
 
 interface ThemeBase {

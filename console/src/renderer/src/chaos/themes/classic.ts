@@ -12,6 +12,7 @@ export const classic: FlatTheme = {
     draft: '#b9cadb',
     moduleStroke: '#0d3a5c',
     selection: '#0d3a5c',
-    background: 'transparent'
+    background: 'transparent',
+    ground: 'rgba(13,58,92,0.10)'
   }
 }

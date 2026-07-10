@@ -16,6 +16,7 @@ import {
   fnColor,
   isDimmed,
   paintFnLabels,
+  paintGround,
   paintModuleBorders,
   paintModuleLabels,
   paintTiles
@@ -653,7 +654,8 @@ export class ChaosEngine {
         dpr * (ovX + cam.vw / 2 - cam.x * cam.z),
         dpr * (ovY + cam.vh / 2 - cam.y * cam.z)
       )
-      paintTiles(c, this.world, view, v, this.scratch)
+      paintGround(c, this.world, v)
+      paintTiles(c, this.world, view, v, this.scratch, 1 / cam.z)
       paintModuleBorders(c, this.world, v, 1 / cam.z)
       // labels + code render at constant screen size - separate passes in screen coords
       const codeVisible = this.lod.band >= 2
@@ -867,6 +869,16 @@ export class ChaosEngine {
     const tl = cam.screenToWorld(bx, by)
     const br = cam.screenToWorld(bx + bw, by + bh)
     const view = { x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y }
+    // ground first, so the cleared region's tile gaps match the baked surround
+    const gx = Math.max(0, view.x)
+    const gy = Math.max(0, view.y)
+    const gw = Math.min(world.w, view.x + view.w) - gx
+    const gh = Math.min(world.h, view.y + view.h) - gy
+    if (gw > 0 && gh > 0) {
+      ctx.fillStyle = v.theme.colors.ground
+      ctx.fillRect(gx, gy, gw, gh)
+    }
+    const shave = 0.5 / cam.z
     const halfW = cam.vw / 2
     const halfH = cam.vh / 2
     for (const i of world.query(view, this.scratch)) {
@@ -878,13 +890,13 @@ export class ChaosEngine {
       ctx.globalAlpha = dimA
       ctx.fillStyle = fnColor(n.f, v)
       if (lift < 0.004) {
-        ctx.fillRect(n.x, n.y, Math.max(0.5, n.w - 0.5), Math.max(0.5, n.h - 0.5))
+        ctx.fillRect(n.x, n.y, Math.max(shave, n.w - shave), Math.max(shave, n.h - shave))
       } else {
         const s = 1 + 0.05 * lift
         const x = n.x + (n.w * (1 - s)) / 2
         const y = n.y + (n.h * (1 - s)) / 2 - (3 * lift) / cam.z
-        const w2 = Math.max(0.5, n.w * s - 0.5)
-        const h2 = Math.max(0.5, n.h * s - 0.5)
+        const w2 = Math.max(shave, n.w * s - shave)
+        const h2 = Math.max(shave, n.h * s - shave)
         ctx.fillRect(x, y, w2, h2)
         ctx.globalAlpha = dimA * 0.1 * lift
         ctx.fillStyle = '#ffffff'

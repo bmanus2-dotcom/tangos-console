@@ -45,21 +45,32 @@ export function isDimmed(f: AtlasFunction, v: PaintView): boolean {
   )
 }
 
-/** Flat tiles in world space. The ctx transform must already map world -> device px. */
+/** Flat tiles in world space. The ctx transform must already map world -> device px.
+ *  invZ keeps the hairline gap between tiles at ~0.5 SCREEN px regardless of zoom -
+ *  world-unit gaps would blow up into fat empty bands at code zoom. */
 export function paintTiles(
   ctx: CanvasRenderingContext2D,
   world: World,
   view: Rect,
   v: PaintView,
-  scratch: number[]
+  scratch: number[],
+  invZ: number
 ): void {
+  const shave = 0.5 * invZ
   for (const i of world.query(view, scratch)) {
     const n = world.fns[i]
     ctx.globalAlpha = isDimmed(n.f, v) ? 0.14 : 1
     ctx.fillStyle = fnColor(n.f, v)
-    ctx.fillRect(n.x, n.y, Math.max(0.5, n.w - 0.5), Math.max(0.5, n.h - 0.5))
+    ctx.fillRect(n.x, n.y, Math.max(shave, n.w - shave), Math.max(shave, n.h - shave))
   }
   ctx.globalAlpha = 1
+}
+
+/** One world-locked ground fill under everything - the tile gaps and module
+ *  insets read as a stable tone that moves with the map. World transform. */
+export function paintGround(ctx: CanvasRenderingContext2D, world: World, v: PaintView): void {
+  ctx.fillStyle = v.theme.colors.ground
+  ctx.fillRect(0, 0, world.w, world.h)
 }
 
 /** Module borders, world space. invZ keeps stroke widths constant on screen. */

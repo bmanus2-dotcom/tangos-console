@@ -43,7 +43,8 @@ export const meier: SpriteTheme = {
     draft: '#d9b23f',
     moduleStroke: '#141414',
     selection: '#0d3a5c',
-    background: 'transparent'
+    background: 'transparent',
+    ground: 'rgba(31,26,18,0.30)'
   },
   tilePx: TILE_PX,
   layout: LAYOUT,

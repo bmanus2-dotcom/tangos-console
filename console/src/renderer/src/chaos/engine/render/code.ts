@@ -55,10 +55,13 @@ export function paintCode(
     ctx.beginPath()
     ctx.rect(p.x + 1, p.y + 1, wpx - 2, hpx - 2)
     ctx.clip()
-    ctx.globalAlpha = (isDimmed(n.f, v) ? 0.14 : 1) * fadeA
-    // readability wash over the status color
+    const dimA = isDimmed(n.f, v) ? 0.14 : 1
+    // readability wash over the status color - ramped over a wide zoom range so
+    // settle-to-settle bakes never visibly snap the tile's color
+    ctx.globalAlpha = dimA * smoothstep(CODE_MIN_H, 220, hpx)
     ctx.fillStyle = 'rgba(255,255,255,0.6)'
     ctx.fillRect(p.x + 1, p.y + 1, wpx - 2, hpx - 2)
+    ctx.globalAlpha = dimA * fadeA
     ctx.font = HEADER_FONT
     ctx.fillStyle = INK
     ctx.fillText(n.f.name, p.x + 6, p.y + 14, wpx - 12)
