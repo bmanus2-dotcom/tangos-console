@@ -202,6 +202,10 @@ export class Camera {
     return false
   }
 
+  get flying(): boolean {
+    return !!this.fly
+  }
+
   settled(now: number): boolean {
     return (
       !this.fly &&

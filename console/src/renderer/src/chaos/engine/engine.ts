@@ -56,6 +56,10 @@ const DEFAULT_OPTS: ViewOptions = {
   themeId: 'classic'
 }
 
+/** Function dives (click or WASD) land almost fullscreen; module fits keep a hair of margin. */
+const FN_PAD = 0.08
+const MOD_PAD = 0.06
+
 const TRAVEL_KEYS: Record<string, [number, number]> = {
   w: [0, -1],
   a: [-1, 0],
@@ -116,6 +120,9 @@ export class ChaosEngine {
   private readonly sources = new SourceCache()
   private travelAnim: { from: Rect; to: Rect; t0: number; dur: number } | null = null
   private lastTravelAt = 0
+  /** What the camera is currently flying toward - re-issued after a rebuild so
+   *  panel reflows mid-flight can never strand the camera partway there. */
+  private flightTarget: { kind: 'fn'; id: string } | { kind: 'mod'; name: string } | { kind: 'fit' } | null = null
   private board = false
   private cloud: { t0: number; dur: number; dir: 1 | -1; switched: boolean } | null = null
   private camBeforeBoard: { x: number; y: number; z: number } | null = null
@@ -195,7 +202,8 @@ export class ChaosEngine {
       if (mod) {
         this.lastEmittedModule = mod.module
         this.cb.onModule(mod.module)
-        this.cam.flyToRect(mod, 0.06, now)
+        this.flightTarget = { kind: 'mod', name: mod.module }
+        this.cam.flyToRect(mod, MOD_PAD, now)
         this.wake()
       }
       return
@@ -208,7 +216,8 @@ export class ChaosEngine {
         this.cb.onFunction(fn.f)
       }
       this.sources.request(fn.f)
-      const dur = this.cam.flyToRect(fn, 0.35, now)
+      this.flightTarget = { kind: 'fn', id: fn.f.id }
+      const dur = this.cam.flyToRect(fn, FN_PAD, now)
       const from = prevIx != null ? this.world.fns[prevIx] : fn
       this.travelAnim = {
         from: { x: from.x, y: from.y, w: from.w, h: from.h },
@@ -252,6 +261,7 @@ export class ChaosEngine {
   }
 
   wheel(cssX: number, cssY: number, deltaY: number): void {
+    this.flightTarget = null
     this.cam.wheelZoomAt(cssX, cssY, deltaY, performance.now())
     this.bubble.hide(performance.now())
     this.wake()
@@ -259,6 +269,7 @@ export class ChaosEngine {
 
   panBy(dxCss: number, dyCss: number): void {
     const now = performance.now()
+    this.flightTarget = null
     this.cam.panBy(dxCss, dyCss, now)
     this.bubble.hide(now)
     this.ripples.clear()
@@ -313,12 +324,14 @@ export class ChaosEngine {
     if (this.lod.band === 3) {
       const dom = this.world.hitMod(this.cam.x, this.cam.y)
       if (dom) {
-        this.cam.flyToRect(dom, 0.06, now)
+        this.flightTarget = { kind: 'mod', name: dom.module }
+        this.cam.flyToRect(dom, MOD_PAD, now)
         this.wake()
         return true
       }
     }
     if (this.lod.band >= 2) {
+      this.flightTarget = { kind: 'fit' }
       this.cam.flyToRect({ x: 0, y: 0, w: this.world.w, h: this.world.h }, 0, now)
       this.wake()
       return true
@@ -343,7 +356,8 @@ export class ChaosEngine {
       this.cb.onFunction(target.f)
     }
     this.sources.request(target.f)
-    const dur = this.cam.flyToRect(target, 0.35, now)
+    this.flightTarget = { kind: 'fn', id: target.f.id }
+    const dur = this.cam.flyToRect(target, FN_PAD, now)
     this.travelAnim = {
       from: { x: cur.x, y: cur.y, w: cur.w, h: cur.h },
       to: { x: target.x, y: target.y, w: target.w, h: target.h },
@@ -418,8 +432,10 @@ export class ChaosEngine {
       if (!mod) return
       const dom = this.world.hitMod(this.cam.x, this.cam.y)
       if (this.lod.band >= 2 && dom && dom.module === m) return
-      this.cam.flyToRect(mod, 0.06, now)
+      this.flightTarget = { kind: 'mod', name: m }
+      this.cam.flyToRect(mod, MOD_PAD, now)
     } else if (this.lod.band > 1) {
+      this.flightTarget = { kind: 'fit' }
       this.cam.flyToRect({ x: 0, y: 0, w: this.world.w, h: this.world.h }, 0, now)
     }
     this.wake()
@@ -540,12 +556,33 @@ export class ChaosEngine {
     }
     if (prev) {
       this.cam.jumpTo(relX * this.world.w, relY * this.world.h, relZ * this.cam.fitZ)
+      this.resumeFlight()
     } else {
       this.cam.fitWorld()
     }
     this.lod.update(this.cam.z)
     this.needBake = true
     this.invalidate()
+  }
+
+  /** jumpTo (the rebuild restore) cancels any tween - re-issue the interrupted
+   *  flight toward the same target, resolved against the fresh layout. */
+  private resumeFlight(): void {
+    const t = this.flightTarget
+    if (!t || !this.world) return
+    const now = performance.now()
+    if (t.kind === 'fn') {
+      const ix = this.world.byId.get(t.id)
+      if (ix == null) return
+      const n = this.world.fns[ix]
+      this.cam.flyToRect(n, FN_PAD, now)
+      if (this.travelAnim) this.travelAnim.to = { x: n.x, y: n.y, w: n.w, h: n.h }
+    } else if (t.kind === 'mod') {
+      const mod = this.world.mods.find((m) => m.module === t.name)
+      if (mod) this.cam.flyToRect(mod, MOD_PAD, now)
+    } else {
+      this.cam.flyToRect({ x: 0, y: 0, w: this.world.w, h: this.world.h }, 0, now)
+    }
   }
 
   private paintView(): PaintView {
@@ -645,6 +682,7 @@ export class ChaosEngine {
       return
     }
     const camMoving = this.cam.update(dt, now)
+    if (this.flightTarget && !this.cam.flying) this.flightTarget = null
     const band = this.lod.update(this.cam.z)
     if (band !== this.lastBand) {
       this.lastBand = band
