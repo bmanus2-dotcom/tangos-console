@@ -349,16 +349,6 @@ export interface AtlasDb {
   functions: AtlasFunction[]
 }
 
-/** Source lines for one function, served to the viewer's code-level zoom.
- *  kind 'src' = the matched/draft .c/.cpp read from the repo; 'disasm' = a
- *  disassembly text field the chaos-db generator may attach to unmatched rows. */
-export interface AtlasSource {
-  lines: string[]
-  truncated: boolean
-  kind: 'src' | 'disasm'
-  path?: string
-}
-
 /** Chaos Viewer preferences persisted in tangos-settings.json. The renderer's
  *  theme registry sanitizes unknown theme ids back to classic. */
 export interface ViewerPrefs {

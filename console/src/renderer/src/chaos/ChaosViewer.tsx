@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { AtlasDb, AtlasFunction } from '../../../shared/types'
 import { ChaosEngine } from './engine/engine'
 import { InputController } from './engine/input'
@@ -6,8 +6,8 @@ import { THEMES } from './themes'
 
 /** The redesigned Chaos Viewer. Drop-in for the classic Treemap in AtlasView:
  *  same data/callback contract, rendering handled by the chaos engine. Overlay
- *  chrome: theme picker + contributor toggle bottom-left, the board "?" button
- *  bottom-right while at the states zoom (band 2). */
+ *  chrome: theme picker + contributor toggle bottom-left; the engine draws its
+ *  own minimap top-right once zoomed in. */
 export default function ChaosViewer({
   db,
   moduleFilter,
@@ -42,8 +42,6 @@ export default function ChaosViewer({
   const engineRef = useRef<ChaosEngine | null>(null)
   const cbRef = useRef({ onModule, onFunction })
   cbRef.current = { onModule, onFunction }
-  const [band, setBand] = useState<1 | 2 | 3>(1)
-  const [board, setBoard] = useState(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -51,9 +49,7 @@ export default function ChaosViewer({
     if (!canvas || !el) return
     const engine = new ChaosEngine(canvas, {
       onModule: (m) => cbRef.current.onModule(m),
-      onFunction: (f) => cbRef.current.onFunction(f),
-      onBand: setBand,
-      onBoard: setBoard
+      onFunction: (f) => cbRef.current.onFunction(f)
     })
     engineRef.current = engine
     const input = new InputController(canvas, engine)
@@ -78,8 +74,6 @@ export default function ChaosViewer({
       input.detach()
       engine.destroy()
       engineRef.current = null
-      setBand(1)
-      setBoard(false)
     }
   }, [])
 
@@ -150,21 +144,6 @@ export default function ChaosViewer({
           </div>
         )}
       </div>
-      {(band === 2 || board) && (
-        <div className="chaos-overlay br">
-          <button
-            className="chaos-board-btn"
-            title={board ? 'leave the board (Esc)' : 'enter the board'}
-            onClick={() => {
-              if (board) engineRef.current?.exitBoard()
-              else engineRef.current?.enterBoard()
-              refocus()
-            }}
-          >
-            ?
-          </button>
-        </div>
-      )}
     </div>
   )
 }

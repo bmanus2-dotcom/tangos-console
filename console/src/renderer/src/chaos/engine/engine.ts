@@ -1,17 +1,13 @@
 import type { AtlasDb, AtlasFunction } from '../../../../shared/types'
 import { buildWorld } from '../layout'
 import type { FnNode, World } from '../layout'
-import { SourceCache } from '../sourceCache'
 import { getTheme } from '../themes'
-import { TILE_PX } from '../themes/types'
 import type { Rect } from '../types'
-import { clamp, easeInOutCubic, mulberry32, smoothstep } from './anim'
+import { clamp, easeInOutCubic } from './anim'
 import { NameBubble } from './bubbles'
 import { Camera } from './camera'
 import { LodState } from './lod'
 import { RippleField, rippleBounds, rippleLift } from './ripple'
-import { paintBoard, terrainKind } from './render/board'
-import type { BoardPaint } from './render/board'
 import {
   fnColor,
   isDimmed,
@@ -22,13 +18,10 @@ import {
   paintTiles
 } from './render/classic'
 import type { PaintView } from './render/classic'
-import { paintCode } from './render/code'
 
 export interface EngineCallbacks {
   onModule: (m: string | null) => void
   onFunction: (f: AtlasFunction) => void
-  onBand?: (band: 1 | 2 | 3) => void
-  onBoard?: (on: boolean) => void
 }
 
 export interface ViewOptions {
@@ -60,8 +53,6 @@ const DEFAULT_OPTS: ViewOptions = {
 /** Function dives (click or WASD) land almost fullscreen; module fits keep a hair of margin. */
 const FN_PAD = 0.08
 const MOD_PAD = 0.06
-/** Board ground-plane tilt: vertical view squash while the board is active. */
-const BOARD_TILT = 0.62
 
 const TRAVEL_KEYS: Record<string, [number, number]> = {
   w: [0, -1],
@@ -120,22 +111,11 @@ export class ChaosEngine {
   private restSince = 0
   private pendingBubble = false
   private lastEmittedModule: string | null = null
-  private lastBand: 1 | 2 | 3 = 1
-  private readonly sources = new SourceCache()
   private travelAnim: { from: Rect; to: Rect; t0: number; dur: number } | null = null
   private lastTravelAt = 0
   /** What the camera is currently flying toward - re-issued after a rebuild so
    *  panel reflows mid-flight can never strand the camera partway there. */
   private flightTarget: { kind: 'fn'; id: string } | { kind: 'mod'; name: string } | { kind: 'fit' } | null = null
-  private board = false
-  private cloud: { t0: number; dur: number; dir: 1 | -1; switched: boolean } | null = null
-  private camBeforeBoard: { x: number; y: number; z: number } | null = null
-  private boardCell = 2
-  private atlasImg: CanvasImageSource | null = null
-  private atlasTheme = ''
-  private cloudSprites: HTMLCanvasElement[] | null = null
-  private shadowSprite: HTMLCanvasElement | null = null
-  private wakeTimer: ReturnType<typeof setTimeout> | null = null
   private worldGen = 0
   private miniBase: HTMLCanvasElement | null = null
   private miniKey = ''
@@ -151,10 +131,6 @@ export class ChaosEngine {
     this.ctx = ctx
     this.base = base
     this.baseCtx = baseCtx
-    this.sources.onReady = () => {
-      this.needBake = true
-      this.wake()
-    }
   }
 
   resize(cssW: number, cssH: number, dpr: number): void {
@@ -181,7 +157,6 @@ export class ChaosEngine {
   }
 
   setData(db: AtlasDb): void {
-    if (this.db !== db) this.sources.clear()
     this.db = db
     this.rebuild()
   }
@@ -199,7 +174,6 @@ export class ChaosEngine {
       'themeId'
     ]
     if (bakeKeys.some((k) => prev[k] !== this.opts[k])) this.needBake = true
-    if (next.themeId && next.themeId !== prev.themeId) this.ensureAtlas()
     if ('moduleFilter' in next && next.moduleFilter !== prev.moduleFilter) {
       // externally requested focus (toolbar chip, list selection, detail-bar close)
       if (this.opts.moduleFilter !== this.lastEmittedModule) this.externalFocus(this.opts.moduleFilter)
@@ -208,29 +182,19 @@ export class ChaosEngine {
     this.invalidate()
   }
 
-  /** Click in canvas CSS coordinates. Band 1: fly into the module. Band 2+:
-   *  the click IS the dive - select the function and fly to fit it (re-clicking
-   *  the selected one never toggle-deselects; Esc/detail-X handle that). */
+  /** Click in canvas CSS coordinates: minimap clicks jump; otherwise the click
+   *  IS the dive - select the function under the cursor at ANY zoom and fly to
+   *  fit it almost fullscreen (re-clicking the selected one never
+   *  toggle-deselects; Esc/detail-X handle backing out). */
   click(cssX: number, cssY: number): void {
     if (!this.world) return
     const now = performance.now()
     const mini = this.miniRect
-    if (this.board && mini && cssX >= mini.x && cssX <= mini.x + mini.w && cssY >= mini.y && cssY <= mini.y + mini.h) {
+    if (mini && cssX >= mini.x && cssX <= mini.x + mini.w && cssY >= mini.y && cssY <= mini.y + mini.h) {
       this.centerFromMini(cssX, cssY, false)
       return
     }
     const p = this.cam.screenToWorld(cssX, cssY)
-    if (this.lod.band === 1) {
-      const mod = this.world.hitMod(p.x, p.y)
-      if (mod) {
-        this.lastEmittedModule = mod.module
-        this.cb.onModule(mod.module)
-        this.flightTarget = { kind: 'mod', name: mod.module }
-        this.cam.flyToRect(mod, MOD_PAD, now)
-        this.wake()
-      }
-      return
-    }
     const fn = this.world.hitFn(p.x, p.y)
     if (fn) {
       const prevIx = this.opts.selectedId != null ? this.world.byId.get(this.opts.selectedId) : undefined
@@ -238,7 +202,6 @@ export class ChaosEngine {
         this.lastEmittedModule = fn.f.module // pre-acknowledge the moduleFilter echo
         this.cb.onFunction(fn.f)
       }
-      this.sources.request(fn.f)
       this.flightTarget = { kind: 'fn', id: fn.f.id }
       const dur = this.cam.flyToRect(fn, FN_PAD, now)
       const from = prevIx != null ? this.world.fns[prevIx] : fn
@@ -287,7 +250,7 @@ export class ChaosEngine {
    *  anywhere else it pans the world. */
   drag(originX: number, originY: number, curX: number, curY: number, dxCss: number, dyCss: number): void {
     const r = this.miniRect
-    if (this.board && r && originX >= r.x && originX <= r.x + r.w && originY >= r.y && originY <= r.y + r.h) {
+    if (r && originX >= r.x && originX <= r.x + r.w && originY >= r.y && originY <= r.y + r.h) {
       this.centerFromMini(curX, curY, true)
       return
     }
@@ -322,37 +285,13 @@ export class ChaosEngine {
     this.wake()
   }
 
-  /** Enter the Sid Meier board through the cloud layer. The theme/zoom switch
-   *  happens at the fully-clouded midpoint, hidden under the cover. */
-  enterBoard(): void {
-    if (this.board || this.cloud || !this.world) return
-    this.cloud = { t0: performance.now(), dur: 900, dir: 1, switched: false }
-    this.camBeforeBoard = { x: this.cam.x, y: this.cam.y, z: this.cam.z }
-    this.ensureClouds()
-    this.ensureShadow()
-    this.ensureAtlas()
-    this.wake()
-  }
-
-  exitBoard(): void {
-    if (!this.board || this.cloud) return
-    this.cloud = { t0: performance.now(), dur: 900, dir: -1, switched: false }
-    this.wake()
-  }
-
   destroy(): void {
     this.disposed = true
     if (this.rafId != null) cancelAnimationFrame(this.rafId)
     this.rafId = null
-    if (this.wakeTimer != null) clearTimeout(this.wakeTimer)
-    this.wakeTimer = null
   }
 
   private escapeOut(): boolean {
-    if (this.board || this.cloud) {
-      this.exitBoard()
-      return true
-    }
     if (!this.world) return false
     const now = performance.now()
     if (this.lod.band === 3) {
@@ -389,7 +328,6 @@ export class ChaosEngine {
       this.lastEmittedModule = target.f.module // pre-acknowledge the moduleFilter echo
       this.cb.onFunction(target.f)
     }
-    this.sources.request(target.f)
     this.flightTarget = { kind: 'fn', id: target.f.id }
     const dur = this.cam.flyToRect(target, FN_PAD, now)
     this.travelAnim = {
@@ -477,101 +415,10 @@ export class ChaosEngine {
 
   private wake(): void {
     if (this.disposed || this.rafId != null) return
-    if (this.wakeTimer != null) {
-      clearTimeout(this.wakeTimer)
-      this.wakeTimer = null
-    }
     this.rafId = requestAnimationFrame(() => {
       this.rafId = null
       this.frame()
     })
-  }
-
-  /** Low-rate wakeup for the board's idle drift - half rAF rate is plenty. */
-  private wakeSoon(ms: number): void {
-    if (this.disposed || this.rafId != null || this.wakeTimer != null) return
-    this.wakeTimer = setTimeout(() => {
-      this.wakeTimer = null
-      this.wake()
-    }, ms)
-  }
-
-  private activateBoard(): void {
-    if (!this.world) return
-    this.board = true
-    this.cb.onBoard?.(true)
-    this.cam.sy = BOARD_TILT
-    this.boardCell = Math.sqrt(Math.max(4, this.world.medianFnArea)) / 4
-    this.cam.setZoomOverride(16 / this.boardCell, 64 / this.boardCell)
-    this.needBake = true
-  }
-
-  private deactivateBoard(): void {
-    this.board = false
-    this.cb.onBoard?.(false)
-    this.cam.sy = 1
-    this.cam.setZoomOverride(null, null)
-    if (this.camBeforeBoard) {
-      this.cam.jumpTo(this.camBeforeBoard.x, this.camBeforeBoard.y, this.camBeforeBoard.z)
-      this.camBeforeBoard = null
-    }
-    this.needBake = true
-  }
-
-  private ensureAtlas(): void {
-    const theme = getTheme(this.opts.themeId)
-    if (theme.mode !== 'sprite') return
-    if (this.atlasTheme === theme.id && this.atlasImg) return
-    const want = theme.id
-    this.atlasTheme = want
-    this.atlasImg = null
-    theme
-      .resolveAtlas()
-      .then((img) => {
-        if (this.atlasTheme !== want || this.disposed) return
-        this.atlasImg = img
-        this.needBake = true
-        this.wake()
-      })
-      .catch(() => {})
-  }
-
-  private ensureClouds(): void {
-    if (this.cloudSprites) return
-    const rnd = mulberry32(0x51f0c1)
-    const sprites: HTMLCanvasElement[] = []
-    for (let v = 0; v < 4; v++) {
-      const c = document.createElement('canvas')
-      c.width = 160
-      c.height = 96
-      const g = c.getContext('2d')
-      if (!g) continue
-      const rows = 8
-      for (let r = 0; r < rows; r++) {
-        const k = Math.sin((Math.PI * (r + 0.5)) / rows)
-        const w = Math.round((60 + rnd() * 60) * k + 30)
-        const x = Math.round((160 - w) / 2 + (rnd() - 0.5) * 24)
-        g.fillStyle = r >= rows - 2 ? 'rgba(214,226,238,0.95)' : 'rgba(255,255,255,0.96)'
-        g.fillRect(x, 8 + r * 10, w, 10)
-      }
-      sprites.push(c)
-    }
-    this.cloudSprites = sprites
-  }
-
-  private ensureShadow(): void {
-    if (this.shadowSprite) return
-    const c = document.createElement('canvas')
-    c.width = 256
-    c.height = 160
-    const g = c.getContext('2d')
-    if (!g) return
-    const grad = g.createRadialGradient(128, 80, 10, 128, 80, 120)
-    grad.addColorStop(0, 'rgba(20,30,40,0.14)')
-    grad.addColorStop(1, 'rgba(20,30,40,0)')
-    g.fillStyle = grad
-    g.fillRect(0, 0, 256, 160)
-    this.shadowSprite = c
   }
 
   /** Jump/scrub the camera to a minimap position (keeps the current zoom). */
@@ -605,10 +452,6 @@ export class ChaosEngine {
     this.worldGen++
     this.lod.compute(this.world, this.cssW, this.cssH)
     this.cam.setWorld(this.world.w, this.world.h, this.lod.zMax())
-    if (this.board) {
-      this.boardCell = Math.sqrt(Math.max(4, this.world.medianFnArea)) / 4
-      this.cam.setZoomOverride(16 / this.boardCell, 64 / this.boardCell)
-    }
     if (prev) {
       this.cam.jumpTo(relX * this.world.w, relY * this.world.h, relZ * this.cam.fitZ)
       this.resumeFlight()
@@ -681,34 +524,21 @@ export class ChaosEngine {
       h: vr.h + (2 * ovY) / zy
     }
     const v = this.paintView()
-    if (this.board) {
-      const theme = getTheme(this.opts.themeId)
-      const bp: BoardPaint =
-        theme.mode === 'sprite'
-          ? { atlas: this.atlasImg, tilePx: theme.tilePx, layout: theme.layout, cellWorld: this.boardCell }
-          : { atlas: null, tilePx: TILE_PX, layout: null, cellWorld: this.boardCell }
-      paintBoard(c, this.world, view, v, cam, dpr, ovX, ovY, bp, this.scratch)
-      c.setTransform(dpr, 0, 0, dpr, ovX * dpr, ovY * dpr)
-      paintModuleLabels(c, this.world, v, cam)
-    } else {
-      c.setTransform(
-        dpr * cam.z,
-        0,
-        0,
-        dpr * zy,
-        dpr * (ovX + cam.vw / 2 - cam.x * cam.z),
-        dpr * (ovY + cam.vh / 2 - cam.y * zy)
-      )
-      paintGround(c, this.world, v)
-      paintTiles(c, this.world, view, v, this.scratch, 1 / cam.z)
-      paintModuleBorders(c, this.world, v, 1 / cam.z)
-      // labels + code render at constant screen size - separate passes in screen coords
-      const codeVisible = this.lod.band >= 2
-      c.setTransform(dpr, 0, 0, dpr, ovX * dpr, ovY * dpr)
-      paintFnLabels(c, this.world, view, v, cam, this.scratch, codeVisible)
-      paintModuleLabels(c, this.world, v, cam)
-      if (codeVisible) paintCode(c, this.world, view, v, cam, this.sources, this.scratch)
-    }
+    c.setTransform(
+      dpr * cam.z,
+      0,
+      0,
+      dpr * zy,
+      dpr * (ovX + cam.vw / 2 - cam.x * cam.z),
+      dpr * (ovY + cam.vh / 2 - cam.y * zy)
+    )
+    paintGround(c, this.world, v)
+    paintTiles(c, this.world, view, v, this.scratch, 1 / cam.z)
+    paintModuleBorders(c, this.world, v, 1 / cam.z)
+    // labels render at constant screen size - separate passes in screen coords
+    c.setTransform(dpr, 0, 0, dpr, ovX * dpr, ovY * dpr)
+    paintFnLabels(c, this.world, view, v, cam, this.scratch)
+    paintModuleLabels(c, this.world, v, cam)
     this.bakeCam = { x: cam.x, y: cam.y, z: cam.z, sy: cam.sy, vw: cam.vw, vh: cam.vh, ovX, ovY }
     this.needBake = false
     this.lastBakeMs = performance.now() - t0
@@ -742,19 +572,6 @@ export class ChaosEngine {
     const camMoving = this.cam.update(dt, now)
     if (this.flightTarget && !this.cam.flying) this.flightTarget = null
     const band = this.lod.update(this.cam.z)
-    if (band !== this.lastBand) {
-      this.lastBand = band
-      this.cb.onBand?.(band)
-    }
-    if (this.cloud) {
-      const tCloud = (now - this.cloud.t0) / this.cloud.dur
-      if (tCloud >= 0.5 && !this.cloud.switched) {
-        this.cloud.switched = true
-        if (this.cloud.dir === 1) this.activateBoard()
-        else this.deactivateBoard()
-      }
-      if (tCloud >= 1) this.cloud = null
-    }
     const settled = this.cam.settled(now)
     if (settled && (this.needBake || !this.bakeMatches())) this.bake()
     const ripplesActive = this.ripples.step(now)
@@ -762,39 +579,33 @@ export class ChaosEngine {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     this.blitBase()
-    if (ripplesActive && band === 1 && settled && !this.board) this.drawRipples(now)
+    if (ripplesActive && band === 1 && settled) this.drawRipples(now)
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    if (this.board && !this.cloud) this.drawBoardShadows(now)
     this.bubble.draw(ctx, this.cam, now)
     this.drawSelection(now)
     this.drawMinimap()
-    const cloudsActive = this.drawClouds(now)
     this.emitFocus(settled, band)
     this.lastFrameMs = performance.now() - now
     if (window.chaosPerf) this.drawPerf()
     // keep frames coming only while something is alive; otherwise the loop sleeps
-    // (the board's idle drift ticks at half rate through wakeSoon)
     if (
       camMoving ||
       !settled ||
       ripplesActive ||
-      cloudsActive ||
       this.bubble.needsFrame(now) ||
       this.pendingBubble ||
       this.travelAnim
     ) {
       this.wake()
-    } else if (this.board) {
-      this.wakeSoon(33)
     }
   }
 
-  /** Minimap (board mode only): whole-world mosaic top-right with the current
-   *  viewport outlined. Click jumps, dragging scrubs. Base re-renders only when
-   *  the world/theme/size changes. */
+  /** Minimap (shown once zoomed past the overview): whole-world mosaic top-right
+   *  with the current viewport outlined. Click jumps, dragging scrubs. The base
+   *  re-renders only when the world/theme/coloring/size changes. */
   private drawMinimap(): void {
     const { world, cam, ctx } = this
-    if (!this.board || !world) {
+    if (!world || this.lod.band < 2) {
       this.miniRect = null
       return
     }
@@ -808,7 +619,7 @@ export class ChaosEngine {
     }
     const r = { x: this.cssW - w - margin, y: margin, w, h }
     this.miniRect = r
-    const key = `${this.worldGen}|${this.opts.themeId}|${w}x${h}|${this.dpr}`
+    const key = `${this.worldGen}|${this.opts.themeId}|${this.opts.colorBy}|${this.opts.showNearMiss}|${w}x${h}|${this.dpr}`
     if (key !== this.miniKey || !this.miniBase) {
       this.miniKey = key
       const base = this.miniBase ?? document.createElement('canvas')
@@ -821,13 +632,7 @@ export class ChaosEngine {
         g.fillStyle = v.theme.colors.ground
         g.fillRect(0, 0, world.w, world.h)
         for (const n of world.fns) {
-          const kind = terrainKind(n.f, v)
-          g.fillStyle =
-            kind === 'corn'
-              ? v.theme.colors.matched
-              : kind === 'plow'
-                ? v.theme.colors.nearMiss
-                : v.theme.colors.unmatched
+          g.fillStyle = fnColor(n.f, v)
           g.fillRect(n.x, n.y, n.w, n.h)
         }
         g.strokeStyle = 'rgba(20,20,20,0.6)'
@@ -858,50 +663,6 @@ export class ChaosEngine {
     ctx.strokeRect(Math.min(mx, r.x + r.w - mw), Math.min(my, r.y + r.h - mh), mw, mh)
   }
 
-  /** Two soft cloud shadows drifting over the board - the living-map idle motion. */
-  private drawBoardShadows(now: number): void {
-    const s = this.shadowSprite
-    if (!s) return
-    const ctx = this.ctx
-    const t = now / 1000
-    const pts = [
-      { x: this.cssW * (0.32 + 0.26 * Math.sin(t * 0.05)), y: this.cssH * (0.35 + 0.22 * Math.cos(t * 0.041)) },
-      { x: this.cssW * (0.66 + 0.24 * Math.cos(t * 0.037)), y: this.cssH * (0.62 + 0.24 * Math.sin(t * 0.047)) }
-    ]
-    for (const p of pts) ctx.drawImage(s, p.x - 190, p.y - 120, 380, 240)
-  }
-
-  /** Cloud layer transition: puffs drift across while coverage ramps to a solid
-   *  sheet at the midpoint (where the board switch happens), then reveals. */
-  private drawClouds(now: number): boolean {
-    const cl = this.cloud
-    if (!cl) return false
-    const t = clamp((now - cl.t0) / cl.dur, 0, 1)
-    const coverage = t < 0.5 ? smoothstep(0.02, 0.45, t) : 1 - smoothstep(0.55, 0.98, t)
-    const sprites = this.cloudSprites
-    if (!sprites || !sprites.length) return t < 1
-    const ctx = this.ctx
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    const span = this.cssW + 480
-    for (let i = 0; i < 14; i++) {
-      const layer = i % 2
-      const speed = layer ? 120 : 70
-      const scale = layer ? 2.7 : 2
-      const x = ((i * 331 + (now / 1000) * speed) % span) - 240
-      const y = ((i * 97) % Math.max(1, this.cssH - 40)) - 30
-      ctx.globalAlpha = coverage * (layer ? 0.95 : 0.8)
-      ctx.drawImage(sprites[i % sprites.length], x, y, 160 * scale, 96 * scale)
-    }
-    const sheet = t < 0.5 ? smoothstep(0.3, 0.48, t) : 1 - smoothstep(0.52, 0.7, t)
-    if (sheet > 0) {
-      ctx.globalAlpha = sheet
-      ctx.fillStyle = '#eef4fa'
-      ctx.fillRect(0, 0, this.cssW, this.cssH)
-    }
-    ctx.globalAlpha = 1
-    return t < 1
-  }
-
   /** While the camera rests at band 2+, the module under the camera center is the
    *  focus - emitted upward so the toolbar/list follow the viewport. Band 1 clears. */
   private emitFocus(settled: boolean, band: 1 | 2 | 3): void {
@@ -922,7 +683,7 @@ export class ChaosEngine {
    *  name pops - modules at band 1, functions at band 2+. Hidden while moving. */
   private updateHover(now: number, settled: boolean): void {
     this.pendingBubble = false
-    if (!this.world || !this.pointer.inside || !settled || this.cloud) {
+    if (!this.world || !this.pointer.inside || !settled) {
       this.bubble.hide(now)
       return
     }
@@ -1033,7 +794,7 @@ export class ChaosEngine {
     ctx.globalAlpha = 1
     paintModuleBorders(ctx, world, v, 1 / cam.z)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    paintFnLabels(ctx, world, view, v, cam, this.scratch, false)
+    paintFnLabels(ctx, world, view, v, cam, this.scratch)
     paintModuleLabels(ctx, world, v, cam)
     ctx.restore()
   }
