@@ -264,7 +264,9 @@ export default function App(): JSX.Element {
   )
 
   const consoleBody = (
-    <div className="workspace ctl-workspace">
+    // All requirements satisfied -> the rail collapses to hug the compact "all set" chip on the
+    // right edge and the Controller takes the width back; anything missing -> full-width panel.
+    <div className={`workspace ctl-workspace${reqAllSet ? ' reqs-ok' : ''}`}>
       <Controller
         agents={agents}
         runs={runs}

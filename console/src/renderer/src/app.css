@@ -780,9 +780,14 @@ html, body, #root { background: transparent !important; }
 }
 .app-seg button.on { color: #fff; }
 
-/* workspace: controller (big) left, tools + requirements rail right */
+/* workspace: controller (big) left, requirements rail right */
 .ctl-workspace { grid-template-columns: 1fr 340px; padding: 14px; }
 .right-rail { display: flex; flex-direction: column; gap: 14px; overflow: auto; min-height: 0; }
+/* all requirements satisfied: the rail collapses to hug the compact "all set" chip docked on the
+   right edge, and the Controller takes the freed width. Expanding the chip restores panel width. */
+.ctl-workspace.reqs-ok { grid-template-columns: 1fr auto; }
+.ctl-workspace.reqs-ok .right-rail { width: auto; }
+.ctl-workspace.reqs-ok .right-rail .panel:not(.req-compact) { width: 340px; }
 
 /* the controller panel */
 .controller { display: flex; flex-direction: column; min-height: 0; }

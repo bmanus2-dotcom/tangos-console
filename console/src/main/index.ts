@@ -548,7 +548,10 @@ function saveSettings(): void {
         useAgents: state.useAgents,
         agentFanout: state.agentFanout,
         autoLand: state.autoLand,
-        autoPushEnabled: state.autoPushEnabled
+        autoPushEnabled: state.autoPushEnabled,
+        // Whether the MCP server is on RIGHT NOW = whether the user last left it on. The next
+        // launch auto-starts it (update restarts kept killing agents' connection point).
+        mcpRunning: !!mcp.url
       })
     )
   } catch {
@@ -567,6 +570,7 @@ function loadSettings(): {
   agentFanout?: number
   autoLand?: boolean
   autoPushEnabled?: boolean
+  mcpRunning?: boolean
 } {
   try {
     return JSON.parse(readFileSync(settingsFile(), 'utf8'))
@@ -1319,7 +1323,7 @@ ipcMain.handle('secrets:delete', (_e, name: string) => {
   return secretsInfo()
 })
 
-ipcMain.handle('mcp:start', async () => {
+async function startMcpServer(): Promise<void> {
   if (!state.descriptor || state.validationErrors.length > 0) {
     throw new Error('cannot start: descriptor missing or invalid')
   }
@@ -1346,11 +1350,17 @@ ipcMain.handle('mcp:start', async () => {
     }
   }
   pushState()
+}
+
+ipcMain.handle('mcp:start', async () => {
+  await startMcpServer()
+  saveSettings() // remember the server is ON, so the next launch (e.g. an update restart) resumes it
   return mcpState()
 })
 
 ipcMain.handle('mcp:stop', async () => {
   await mcp.stop()
+  saveSettings() // user turned it OFF - don't resurrect it next launch
   pushState()
   return mcpState()
 })
@@ -2239,6 +2249,13 @@ app.whenReady().then(() => {
   ensureTips()
   ensureTour()
   if (saved.lastRepo && looksLikeRepo(saved.lastRepo)) setRepo(saved.lastRepo)
+  // The MCP server was on when the app last closed (including an update's restart) - bring it
+  // back up so connected agents' endpoint comes back without the human re-clicking Start.
+  if (saved.mcpRunning && state.descriptor && state.validationErrors.length === 0) {
+    void startMcpServer().catch(() => {
+      /* port taken or repo moved - the user can start it by hand as before */
+    })
+  }
   createWindow()
   initAutoUpdate() // check the public releases feed for a newer build
   // Debug hotkeys: Ctrl+Shift+D writes a snapshot (screenshot + state + dom) to the debug folder;
