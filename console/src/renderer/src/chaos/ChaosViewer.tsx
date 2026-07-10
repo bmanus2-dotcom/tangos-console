@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { AtlasDb, AtlasFunction } from '../../../shared/types'
 import { ChaosEngine } from './engine/engine'
 import { InputController } from './engine/input'
+import type { LayoutMode } from './types'
 
 /** The redesigned Chaos Viewer. Drop-in for the classic Treemap in AtlasView:
  *  same data/callback contract, rendering handled by the chaos engine. Overlay
@@ -18,7 +19,8 @@ export default function ChaosViewer({
   authorColors,
   authorResolve,
   authorFilter = null,
-  showNearMiss = true
+  showNearMiss = true,
+  layout = 'ov'
 }: {
   db: AtlasDb
   moduleFilter: string | null
@@ -31,6 +33,7 @@ export default function ChaosViewer({
   authorResolve?: Map<string, string>
   authorFilter?: string | null
   showNearMiss?: boolean
+  layout?: LayoutMode
 }): JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -85,9 +88,10 @@ export default function ChaosViewer({
       moduleFilter,
       showNearMiss,
       selectedId,
-      themeId: 'classic'
+      themeId: 'classic',
+      layout
     })
-  }, [colorBy, authorColors, authorResolve, authorFilter, moduleFilter, showNearMiss, selectedId])
+  }, [colorBy, authorColors, authorResolve, authorFilter, moduleFilter, showNearMiss, selectedId, layout])
 
   const refocus = (): void => canvasRef.current?.focus()
 

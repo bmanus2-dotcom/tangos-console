@@ -1,6 +1,6 @@
 import { squarify } from '../atlas/squarify'
 import type { AtlasDb, AtlasFunction } from '../../../shared/types'
-import type { Rect } from './types'
+import type { LayoutMode, Rect } from './types'
 
 export interface FnNode {
   f: AtlasFunction
@@ -50,32 +50,63 @@ function median(sorted: number[]): number {
   return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 1
 }
 
-/** Same nesting as the classic Treemap (Treemap.tsx geometry): modules squarified
- *  into the full rect, then each module's functions squarified inside a 1px inset.
+/** Squarified layout with a pluggable grouping: ov sections (the classic Treemap
+ *  nesting), one flat map by size, fixed status bands, or contributor sections.
  *  Adds a uniform grid so culling and hover hit tests stay cheap at 10k tiles. */
-export function buildWorld(db: AtlasDb, w: number, h: number): World {
-  const groups = new Map<string, { module: string; value: number; funcs: AtlasFunction[] }>()
-  for (const f of db.functions) {
-    const g = groups.get(f.module) ?? { module: f.module, value: 0, funcs: [] }
-    g.value += Math.max(1, f.size)
-    g.funcs.push(f)
-    groups.set(f.module, g)
-  }
-  const modItems = [...groups.values()].sort((a, b) => b.value - a.value)
-  const modTiles = squarify(modItems, 0, 0, w, h)
+export function buildWorld(
+  db: AtlasDb,
+  w: number,
+  h: number,
+  mode: LayoutMode = 'ov',
+  authorResolve?: Map<string, string>
+): World {
   const mods: ModNode[] = []
   const fns: FnNode[] = []
-  for (const mt of modTiles) {
-    const modIx = mods.length
-    const items = mt.item.funcs
+  if (mode === 'size') {
+    const items = db.functions
       .slice()
       .sort((a, b) => b.size - a.size)
       .map((f) => ({ f, value: Math.max(1, f.size) }))
-    const fnTiles = squarify(items, mt.x + 1, mt.y + 1, Math.max(0, mt.w - 2), Math.max(0, mt.h - 2))
-    for (const ft of fnTiles) {
-      fns.push({ f: ft.item.f, x: ft.x, y: ft.y, w: ft.w, h: ft.h, modIx, idHash: fnv1a(ft.item.f.id) })
+    for (const t of squarify(items, 0, 0, w, h)) {
+      fns.push({ f: t.item.f, x: t.x, y: t.y, w: t.w, h: t.h, modIx: 0, idHash: fnv1a(t.item.f.id) })
     }
-    mods.push({ module: mt.item.module, x: mt.x, y: mt.y, w: mt.w, h: mt.h })
+  } else {
+    const keyOf = (f: AtlasFunction): string => {
+      if (mode === 'ov') return f.module
+      if (mode === 'match') {
+        return f.matched ? 'matched' : typeof f.div === 'number' || f.srcPath ? 'draft' : 'unmatched'
+      }
+      return f.matched && f.author ? authorResolve?.get(f.author) ?? f.author : 'unmatched'
+    }
+    const groups = new Map<string, { module: string; value: number; funcs: AtlasFunction[] }>()
+    for (const f of db.functions) {
+      const k = keyOf(f)
+      const g = groups.get(k) ?? { module: k, value: 0, funcs: [] }
+      g.value += Math.max(1, f.size)
+      g.funcs.push(f)
+      groups.set(k, g)
+    }
+    const modItems = [...groups.values()]
+    if (mode === 'match') {
+      // fixed progression: uncleared land first, then drafts, then matched
+      const order = ['unmatched', 'draft', 'matched']
+      modItems.sort((a, b) => order.indexOf(a.module) - order.indexOf(b.module))
+    } else {
+      modItems.sort((a, b) => b.value - a.value)
+    }
+    const modTiles = squarify(modItems, 0, 0, w, h)
+    for (const mt of modTiles) {
+      const modIx = mods.length
+      const items = mt.item.funcs
+        .slice()
+        .sort((a, b) => b.size - a.size)
+        .map((f) => ({ f, value: Math.max(1, f.size) }))
+      const fnTiles = squarify(items, mt.x + 1, mt.y + 1, Math.max(0, mt.w - 2), Math.max(0, mt.h - 2))
+      for (const ft of fnTiles) {
+        fns.push({ f: ft.item.f, x: ft.x, y: ft.y, w: ft.w, h: ft.h, modIx, idHash: fnv1a(ft.item.f.id) })
+      }
+      mods.push({ module: mt.item.module, x: mt.x, y: mt.y, w: mt.w, h: mt.h })
+    }
   }
 
   const byId = new Map<string, number>()
@@ -142,7 +173,8 @@ export function buildWorld(db: AtlasDb, w: number, h: number): World {
     fns,
     byId,
     medianFnArea: median(fnAreas),
-    medianModArea: median(modAreas),
+    // no sections (size mode): pretend ~8 regions so the LOD bands stay sane
+    medianModArea: mods.length ? median(modAreas) : (w * h) / 8,
     query,
     hitFn,
     hitMod

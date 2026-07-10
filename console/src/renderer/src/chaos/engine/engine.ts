@@ -3,7 +3,7 @@ import { buildWorld } from '../layout'
 import type { FnNode, World } from '../layout'
 import { SourceCache } from '../sourceCache'
 import { getTheme } from '../themes'
-import type { Rect } from '../types'
+import type { LayoutMode, Rect } from '../types'
 import { clamp, easeInOutCubic } from './anim'
 import { NameBubble } from './bubbles'
 import { Camera } from './camera'
@@ -33,6 +33,7 @@ export interface ViewOptions {
   showNearMiss: boolean
   selectedId?: string
   themeId: string
+  layout: LayoutMode
 }
 
 declare global {
@@ -47,7 +48,8 @@ const DEFAULT_OPTS: ViewOptions = {
   authorFilter: null,
   moduleFilter: null,
   showNearMiss: true,
-  themeId: 'classic'
+  themeId: 'classic',
+  layout: 'ov'
 }
 
 /** Function dives (click or WASD) land almost fullscreen; module fits keep a hair of margin. */
@@ -178,6 +180,11 @@ export class ChaosEngine {
       'themeId'
     ]
     if (bakeKeys.some((k) => prev[k] !== this.opts[k])) this.needBake = true
+    if (next.layout && next.layout !== prev.layout) {
+      // grouping changed: a genuinely different geography - relayout and refit
+      this.freshLayout()
+      return
+    }
     if ('moduleFilter' in next && next.moduleFilter !== prev.moduleFilter) {
       // externally requested focus (toolbar chip, list selection, detail-bar close)
       if (this.opts.moduleFilter !== this.lastEmittedModule) this.externalFocus(this.opts.moduleFilter)
@@ -220,7 +227,9 @@ export class ChaosEngine {
       return
     }
     const mod = this.world.hitMod(p.x, p.y)
-    if (mod) this.cb.onModule(this.opts.moduleFilter === mod.module ? null : mod.module)
+    if (mod && this.opts.layout === 'ov') {
+      this.cb.onModule(this.opts.moduleFilter === mod.module ? null : mod.module)
+    }
   }
 
   /** Pointer position in canvas CSS coordinates. Feeds the hover lift + bubbles. */
@@ -396,7 +405,7 @@ export class ChaosEngine {
   }
 
   private externalFocus(m: string | null): void {
-    if (!this.world) return
+    if (!this.world || this.opts.layout !== 'ov') return
     const now = performance.now()
     if (m) {
       const mod = this.world.mods.find((x) => x.module === m)
@@ -438,6 +447,14 @@ export class ChaosEngine {
     this.wake()
   }
 
+  /** Relayout from scratch (grouping switch): new geography, camera refits. */
+  private freshLayout(): void {
+    this.world = null
+    this.flightTarget = null
+    this.lastEmittedModule = null
+    this.rebuild()
+  }
+
   private rebuild(): void {
     if (!this.db || this.cssW <= 0 || this.cssH <= 0) return
     const prev = this.world
@@ -447,7 +464,7 @@ export class ChaosEngine {
     const relX = prev ? this.cam.x / prev.w : 0.5
     const relY = prev ? this.cam.y / prev.h : 0.5
     const relZ = prev ? this.cam.z / this.cam.fitZ : 1
-    this.world = buildWorld(this.db, this.cssW, this.cssH)
+    this.world = buildWorld(this.db, this.cssW, this.cssH, this.opts.layout, this.opts.authorResolve)
     this.worldGen++
     this.lod.compute(this.world, this.cssW, this.cssH)
     this.cam.setWorld(this.world.w, this.world.h, this.lod.zMax())
@@ -662,7 +679,7 @@ export class ChaosEngine {
   /** While the camera rests at band 2+, the module under the camera center is the
    *  focus - emitted upward so the toolbar/list follow the viewport. Band 1 clears. */
   private emitFocus(settled: boolean, band: 1 | 2 | 3): void {
-    if (!settled || !this.world) return
+    if (!settled || !this.world || this.opts.layout !== 'ov') return
     if (band >= 2) {
       const dom = this.world.hitMod(this.cam.x, this.cam.y)
       if (dom && dom.module !== this.lastEmittedModule) {

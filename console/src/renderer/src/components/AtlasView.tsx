@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, Search, Plus, Minus, X, Database, Cloud, HardDrive, Users, ExternalLink } from 'lucide-react'
 import type { AtlasDb, AtlasFunction, BatchItem, GithubCredits } from '../../../shared/types'
 import ChaosViewer from '../chaos/ChaosViewer'
+import type { LayoutMode } from '../chaos/types'
 import { sortFns, SORT_LABELS, type SortKey } from '../atlas/sort'
 
 const pct = (n: number, d: number): string => (d ? `${((n / d) * 100).toFixed(1)}%` : '0%')
@@ -30,6 +31,7 @@ export default function AtlasView({
   const [moduleFilter, setModuleFilter] = useState<string | null>(null)
   const [sort, setSort] = useState<SortKey>('unmatched')
   const [colorBy, setColorBy] = useState<'status' | 'author'>('status')
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('ov')
   const [authorFilter, setAuthorFilter] = useState<string | null>(null)
   const [showNearMiss, setShowNearMiss] = useState(true)
   const [selectedFn, setSelectedFn] = useState<AtlasFunction | null>(null)
@@ -56,6 +58,10 @@ export default function AtlasView({
   const pickColorBy = (c: 'status' | 'author'): void => {
     setColorBy(c)
     void window.tangos.viewerPrefsSet({ contributorColors: c === 'author' }).catch(() => {})
+  }
+  const pickLayout = (m: LayoutMode): void => {
+    setLayoutMode(m)
+    if (m !== 'ov') setModuleFilter(null) // group names are not ov names - keep the list unfiltered
   }
 
   // data-file author key -> canonical GitHub login (dedups an email-derived key vs the GitHub login, etc.)
@@ -272,7 +278,7 @@ export default function AtlasView({
             setModuleFilter(null)
           } else {
             setSelectedFn(f)
-            setModuleFilter(f.module)
+            if (layoutMode === 'ov') setModuleFilter(f.module)
           }
         }}
         selectedId={selectedFn?.id}
@@ -282,7 +288,24 @@ export default function AtlasView({
         authorResolve={keyToLogin}
         authorFilter={authorFilter}
         showNearMiss={showNearMiss}
+        layout={layoutMode}
       />
+      <div className="atlas-sortbar">
+        <div className="seg">
+          {(
+            [
+              ['ov', 'By ov'],
+              ['size', 'By size'],
+              ['match', 'By match'],
+              ['contributor', 'By contributor']
+            ] as Array<[LayoutMode, string]>
+          ).map(([m, label]) => (
+            <button key={m} className={layoutMode === m ? 'on' : ''} onClick={() => pickLayout(m)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       </div>
 
       <div className="atlas-right">
