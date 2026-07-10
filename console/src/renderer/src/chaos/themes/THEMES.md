@@ -42,6 +42,9 @@ matched = corn.
 - Draw at exactly 32x32 with hard pixel edges - no anti-aliasing, no soft
   shadows. The renderer scales with nearest-neighbor (16 to 64 px on screen),
   so crisp pixels stay crisp and AA halos look like dirt.
+- Draw tiles as normal SQUARE top-down art. The board renders at an angle by
+  squashing everything vertically (about 0.62x) - the renderer handles that;
+  do not pre-squash or skew the art.
 - Cloud sprites are drawn much larger during the board entry transition -
   chunky silhouettes read better than detailed ones.
 

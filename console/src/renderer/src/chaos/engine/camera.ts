@@ -26,6 +26,8 @@ export class Camera {
   x = 0
   y = 0
   z = 1
+  /** Vertical view squash: 1 = straight down, <1 tilts the ground plane (board mode). */
+  sy = 1
   vw = 1
   vh = 1
   worldW = 1
@@ -107,7 +109,7 @@ export class Camera {
 
   jumpToRect(r: Rect, padFrac: number): void {
     const z = clamp(
-      Math.min(this.vw / (r.w * (1 + 2 * padFrac)), this.vh / (r.h * (1 + 2 * padFrac))),
+      Math.min(this.vw / (r.w * (1 + 2 * padFrac)), this.vh / (r.h * (1 + 2 * padFrac) * this.sy)),
       this.zLo,
       this.zHi
     )
@@ -123,15 +125,15 @@ export class Camera {
   /** Returns the flight duration in ms so companions (selection bubble) can sync. */
   flyToRect(r: Rect, padFrac: number, now: number): number {
     const z1 = clamp(
-      Math.min(this.vw / (r.w * (1 + 2 * padFrac)), this.vh / (r.h * (1 + 2 * padFrac))),
+      Math.min(this.vw / (r.w * (1 + 2 * padFrac)), this.vh / (r.h * (1 + 2 * padFrac) * this.sy)),
       this.zLo,
       this.zHi
     )
     const x1 = this.clampAxisAt(r.x + r.w / 2, this.worldW, this.vw, z1)
-    const y1 = this.clampAxisAt(r.y + r.h / 2, this.worldH, this.vh, z1)
+    const y1 = this.clampAxisAt(r.y + r.h / 2, this.worldH, this.vh, z1 * this.sy)
     const lz0 = Math.log(this.z)
     const lz1 = Math.log(z1)
-    const travel = Math.hypot((x1 - this.x) * z1, (y1 - this.y) * z1)
+    const travel = Math.hypot((x1 - this.x) * z1, (y1 - this.y) * z1 * this.sy)
     const dur = clamp(350 + 250 * Math.min(1, travel / this.vw) + 120 * Math.abs(lz1 - lz0), 350, 800)
     const panWorld = Math.hypot(x1 - this.x, y1 - this.y)
     const dip = 0.35 * Math.min(1, (panWorld * Math.min(this.z, z1)) / this.vw)
@@ -159,7 +161,7 @@ export class Camera {
   panBy(dxCss: number, dyCss: number, now: number): void {
     this.fly = null
     this.x -= dxCss / this.z
-    this.y -= dyCss / this.z
+    this.y -= dyCss / (this.z * this.sy)
     this.clampPan()
     this.lastNudge = now
   }
@@ -216,19 +218,25 @@ export class Camera {
   }
 
   worldToScreen(wx: number, wy: number): Pt {
-    return { x: (wx - this.x) * this.z + this.vw / 2, y: (wy - this.y) * this.z + this.vh / 2 }
+    return {
+      x: (wx - this.x) * this.z + this.vw / 2,
+      y: (wy - this.y) * this.z * this.sy + this.vh / 2
+    }
   }
 
-  screenToWorld(sx: number, sy: number): Pt {
-    return { x: (sx - this.vw / 2) / this.z + this.x, y: (sy - this.vh / 2) / this.z + this.y }
+  screenToWorld(sx: number, syPx: number): Pt {
+    return {
+      x: (sx - this.vw / 2) / this.z + this.x,
+      y: (syPx - this.vh / 2) / (this.z * this.sy) + this.y
+    }
   }
 
   viewRect(): Rect {
     return {
       x: this.x - this.vw / 2 / this.z,
-      y: this.y - this.vh / 2 / this.z,
+      y: this.y - this.vh / 2 / (this.z * this.sy),
       w: this.vw / this.z,
-      h: this.vh / this.z
+      h: this.vh / (this.z * this.sy)
     }
   }
 
@@ -240,6 +248,6 @@ export class Camera {
 
   private clampPan(): void {
     this.x = this.clampAxisAt(this.x, this.worldW, this.vw, this.z)
-    this.y = this.clampAxisAt(this.y, this.worldH, this.vh, this.z)
+    this.y = this.clampAxisAt(this.y, this.worldH, this.vh, this.z * this.sy)
   }
 }

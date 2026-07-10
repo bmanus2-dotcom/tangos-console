@@ -10,7 +10,7 @@ import { NameBubble } from './bubbles'
 import { Camera } from './camera'
 import { LodState } from './lod'
 import { RippleField, rippleBounds, rippleLift } from './ripple'
-import { paintBoard } from './render/board'
+import { paintBoard, terrainKind } from './render/board'
 import type { BoardPaint } from './render/board'
 import {
   fnColor,
@@ -60,6 +60,8 @@ const DEFAULT_OPTS: ViewOptions = {
 /** Function dives (click or WASD) land almost fullscreen; module fits keep a hair of margin. */
 const FN_PAD = 0.08
 const MOD_PAD = 0.06
+/** Board ground-plane tilt: vertical view squash while the board is active. */
+const BOARD_TILT = 0.62
 
 const TRAVEL_KEYS: Record<string, [number, number]> = {
   w: [0, -1],
@@ -76,6 +78,7 @@ interface BakeCam {
   x: number
   y: number
   z: number
+  sy: number
   vw: number
   vh: number
   ovX: number
@@ -133,6 +136,10 @@ export class ChaosEngine {
   private cloudSprites: HTMLCanvasElement[] | null = null
   private shadowSprite: HTMLCanvasElement | null = null
   private wakeTimer: ReturnType<typeof setTimeout> | null = null
+  private worldGen = 0
+  private miniBase: HTMLCanvasElement | null = null
+  private miniKey = ''
+  private miniRect: Rect | null = null
 
   constructor(canvas: HTMLCanvasElement, cb: EngineCallbacks) {
     this.canvas = canvas
@@ -207,6 +214,11 @@ export class ChaosEngine {
   click(cssX: number, cssY: number): void {
     if (!this.world) return
     const now = performance.now()
+    const mini = this.miniRect
+    if (this.board && mini && cssX >= mini.x && cssX <= mini.x + mini.w && cssY >= mini.y && cssY <= mini.y + mini.h) {
+      this.centerFromMini(cssX, cssY, false)
+      return
+    }
     const p = this.cam.screenToWorld(cssX, cssY)
     if (this.lod.band === 1) {
       const mod = this.world.hitMod(p.x, p.y)
@@ -269,6 +281,17 @@ export class ChaosEngine {
     this.pointer.inside = false
     this.bubble.hide(performance.now())
     this.wake()
+  }
+
+  /** Drag router: a drag that STARTED on the minimap scrubs the camera there;
+   *  anywhere else it pans the world. */
+  drag(originX: number, originY: number, curX: number, curY: number, dxCss: number, dyCss: number): void {
+    const r = this.miniRect
+    if (this.board && r && originX >= r.x && originX <= r.x + r.w && originY >= r.y && originY <= r.y + r.h) {
+      this.centerFromMini(curX, curY, true)
+      return
+    }
+    this.panBy(dxCss, dyCss)
   }
 
   wheel(cssX: number, cssY: number, deltaY: number): void {
@@ -477,6 +500,7 @@ export class ChaosEngine {
     if (!this.world) return
     this.board = true
     this.cb.onBoard?.(true)
+    this.cam.sy = BOARD_TILT
     this.boardCell = Math.sqrt(Math.max(4, this.world.medianFnArea)) / 4
     this.cam.setZoomOverride(16 / this.boardCell, 64 / this.boardCell)
     this.needBake = true
@@ -485,6 +509,7 @@ export class ChaosEngine {
   private deactivateBoard(): void {
     this.board = false
     this.cb.onBoard?.(false)
+    this.cam.sy = 1
     this.cam.setZoomOverride(null, null)
     if (this.camBeforeBoard) {
       this.cam.jumpTo(this.camBeforeBoard.x, this.camBeforeBoard.y, this.camBeforeBoard.z)
@@ -549,6 +574,24 @@ export class ChaosEngine {
     this.shadowSprite = c
   }
 
+  /** Jump/scrub the camera to a minimap position (keeps the current zoom). */
+  private centerFromMini(cssX: number, cssY: number, scrub: boolean): void {
+    const r = this.miniRect
+    if (!r || !this.world) return
+    const wx = clamp((cssX - r.x) / r.w, 0, 1) * this.world.w
+    const wy = clamp((cssY - r.y) / r.h, 0, 1) * this.world.h
+    this.flightTarget = null
+    this.bubble.hide(performance.now())
+    if (scrub) {
+      this.cam.jumpTo(wx, wy, this.cam.z)
+      this.cam.panBy(0, 0, performance.now()) // mark as nudged so bakes wait for release
+    } else {
+      const vr = this.cam.viewRect()
+      this.cam.flyToRect({ x: wx - vr.w / 2, y: wy - vr.h / 2, w: vr.w, h: vr.h }, 0, performance.now())
+    }
+    this.wake()
+  }
+
   private rebuild(): void {
     if (!this.db || this.cssW <= 0 || this.cssH <= 0) return
     const prev = this.world
@@ -559,6 +602,7 @@ export class ChaosEngine {
     const relY = prev ? this.cam.y / prev.h : 0.5
     const relZ = prev ? this.cam.z / this.cam.fitZ : 1
     this.world = buildWorld(this.db, this.cssW, this.cssH)
+    this.worldGen++
     this.lod.compute(this.world, this.cssW, this.cssH)
     this.cam.setWorld(this.world.w, this.world.h, this.lod.zMax())
     if (this.board) {
@@ -610,7 +654,7 @@ export class ChaosEngine {
 
   private bakeMatches(): boolean {
     const b = this.bakeCam
-    return !!b && b.x === this.cam.x && b.y === this.cam.y && b.z === this.cam.z
+    return !!b && b.x === this.cam.x && b.y === this.cam.y && b.z === this.cam.z && b.sy === this.cam.sy
   }
 
   private bake(): void {
@@ -628,12 +672,13 @@ export class ChaosEngine {
     const c = this.baseCtx
     c.setTransform(1, 0, 0, 1, 0, 0)
     c.clearRect(0, 0, bw, bh)
+    const zy = cam.z * cam.sy
     const vr = cam.viewRect()
     const view = {
       x: vr.x - ovX / cam.z,
-      y: vr.y - ovY / cam.z,
+      y: vr.y - ovY / zy,
       w: vr.w + (2 * ovX) / cam.z,
-      h: vr.h + (2 * ovY) / cam.z
+      h: vr.h + (2 * ovY) / zy
     }
     const v = this.paintView()
     if (this.board) {
@@ -650,9 +695,9 @@ export class ChaosEngine {
         dpr * cam.z,
         0,
         0,
-        dpr * cam.z,
+        dpr * zy,
         dpr * (ovX + cam.vw / 2 - cam.x * cam.z),
-        dpr * (ovY + cam.vh / 2 - cam.y * cam.z)
+        dpr * (ovY + cam.vh / 2 - cam.y * zy)
       )
       paintGround(c, this.world, v)
       paintTiles(c, this.world, view, v, this.scratch, 1 / cam.z)
@@ -664,7 +709,7 @@ export class ChaosEngine {
       paintModuleLabels(c, this.world, v, cam)
       if (codeVisible) paintCode(c, this.world, view, v, cam, this.sources, this.scratch)
     }
-    this.bakeCam = { x: cam.x, y: cam.y, z: cam.z, vw: cam.vw, vh: cam.vh, ovX, ovY }
+    this.bakeCam = { x: cam.x, y: cam.y, z: cam.z, sy: cam.sy, vw: cam.vw, vh: cam.vh, ovX, ovY }
     this.needBake = false
     this.lastBakeMs = performance.now() - t0
   }
@@ -676,10 +721,11 @@ export class ChaosEngine {
     if (!bk) return
     const { ctx, cam, dpr } = this
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const s = cam.z / bk.z
-    const dx = (bk.x - cam.x) * cam.z + cam.vw / 2 - (bk.ovX + bk.vw / 2) * s
-    const dy = (bk.y - cam.y) * cam.z + cam.vh / 2 - (bk.ovY + bk.vh / 2) * s
-    ctx.drawImage(this.base, dx, dy, (bk.vw + 2 * bk.ovX) * s, (bk.vh + 2 * bk.ovY) * s)
+    const sX = cam.z / bk.z
+    const sY = (cam.z * cam.sy) / (bk.z * bk.sy)
+    const dx = (bk.x - cam.x) * cam.z + cam.vw / 2 - (bk.ovX + bk.vw / 2) * sX
+    const dy = (bk.y - cam.y) * cam.z * cam.sy + cam.vh / 2 - (bk.ovY + bk.vh / 2) * sY
+    ctx.drawImage(this.base, dx, dy, (bk.vw + 2 * bk.ovX) * sX, (bk.vh + 2 * bk.ovY) * sY)
   }
 
   private frame(): void {
@@ -721,6 +767,7 @@ export class ChaosEngine {
     if (this.board && !this.cloud) this.drawBoardShadows(now)
     this.bubble.draw(ctx, this.cam, now)
     this.drawSelection(now)
+    this.drawMinimap()
     const cloudsActive = this.drawClouds(now)
     this.emitFocus(settled, band)
     this.lastFrameMs = performance.now() - now
@@ -740,6 +787,75 @@ export class ChaosEngine {
     } else if (this.board) {
       this.wakeSoon(33)
     }
+  }
+
+  /** Minimap (board mode only): whole-world mosaic top-right with the current
+   *  viewport outlined. Click jumps, dragging scrubs. Base re-renders only when
+   *  the world/theme/size changes. */
+  private drawMinimap(): void {
+    const { world, cam, ctx } = this
+    if (!this.board || !world) {
+      this.miniRect = null
+      return
+    }
+    const margin = 14
+    let w = clamp(this.cssW * 0.22, 120, 220)
+    let h = Math.round((w * world.h) / world.w)
+    const maxH = this.cssH * 0.32
+    if (h > maxH) {
+      h = Math.round(maxH)
+      w = Math.round((h * world.w) / world.h)
+    }
+    const r = { x: this.cssW - w - margin, y: margin, w, h }
+    this.miniRect = r
+    const key = `${this.worldGen}|${this.opts.themeId}|${w}x${h}|${this.dpr}`
+    if (key !== this.miniKey || !this.miniBase) {
+      this.miniKey = key
+      const base = this.miniBase ?? document.createElement('canvas')
+      base.width = Math.max(1, Math.round(w * this.dpr))
+      base.height = Math.max(1, Math.round(h * this.dpr))
+      const g = base.getContext('2d')
+      if (g) {
+        const v = this.paintView()
+        g.setTransform(base.width / world.w, 0, 0, base.height / world.h, 0, 0)
+        g.fillStyle = v.theme.colors.ground
+        g.fillRect(0, 0, world.w, world.h)
+        for (const n of world.fns) {
+          const kind = terrainKind(n.f, v)
+          g.fillStyle =
+            kind === 'corn'
+              ? v.theme.colors.matched
+              : kind === 'plow'
+                ? v.theme.colors.nearMiss
+                : v.theme.colors.unmatched
+          g.fillRect(n.x, n.y, n.w, n.h)
+        }
+        g.strokeStyle = 'rgba(20,20,20,0.6)'
+        g.lineWidth = world.w / base.width
+        for (const m of world.mods) g.strokeRect(m.x, m.y, m.w, m.h)
+      }
+      this.miniBase = base
+    }
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    ctx.beginPath()
+    ctx.roundRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8, 8)
+    ctx.fillStyle = 'rgba(15,20,26,0.55)'
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    if (this.miniBase) ctx.drawImage(this.miniBase, r.x, r.y, r.w, r.h)
+    const vr = cam.viewRect()
+    const mx = r.x + clamp(vr.x / world.w, 0, 1) * r.w
+    const my = r.y + clamp(vr.y / world.h, 0, 1) * r.h
+    const mw = Math.max(6, Math.min(r.w, (vr.w / world.w) * r.w))
+    const mh = Math.max(6, Math.min(r.h, (vr.h / world.h) * r.h))
+    ctx.strokeStyle = 'rgba(10,12,14,0.8)'
+    ctx.lineWidth = 3
+    ctx.strokeRect(Math.min(mx, r.x + r.w - mw), Math.min(my, r.y + r.h - mh), mw, mh)
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.5
+    ctx.strokeRect(Math.min(mx, r.x + r.w - mw), Math.min(my, r.y + r.h - mh), mw, mh)
   }
 
   /** Two soft cloud shadows drifting over the board - the living-map idle motion. */
@@ -807,6 +923,17 @@ export class ChaosEngine {
   private updateHover(now: number, settled: boolean): void {
     this.pendingBubble = false
     if (!this.world || !this.pointer.inside || !settled || this.cloud) {
+      this.bubble.hide(now)
+      return
+    }
+    const mini = this.miniRect
+    if (
+      mini &&
+      this.pointer.x >= mini.x &&
+      this.pointer.x <= mini.x + mini.w &&
+      this.pointer.y >= mini.y &&
+      this.pointer.y <= mini.y + mini.h
+    ) {
       this.bubble.hide(now)
       return
     }
@@ -944,7 +1071,7 @@ export class ChaosEngine {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     const p = cam.worldToScreen(rx, ry)
     const mw = Math.max(rw * cam.z, 5)
-    const mh = Math.max(rh * cam.z, 5)
+    const mh = Math.max(rh * cam.z * cam.sy, 5)
     const rad = Math.max(2, Math.min(9, mw / 4, mh / 4))
     ctx.lineJoin = 'round'
     ctx.strokeStyle = 'rgba(255,255,255,0.95)'

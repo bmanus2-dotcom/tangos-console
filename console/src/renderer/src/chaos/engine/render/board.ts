@@ -43,7 +43,7 @@ export function paintBoard(
   const t = bp.tilePx
   const cw = bp.cellWorld
   const projX = (wx: number): number => Math.round(((wx - cam.x) * cam.z + cam.vw / 2 + ovX) * dpr)
-  const projY = (wy: number): number => Math.round(((wy - cam.y) * cam.z + cam.vh / 2 + ovY) * dpr)
+  const projY = (wy: number): number => Math.round(((wy - cam.y) * cam.z * cam.sy + cam.vh / 2 + ovY) * dpr)
   const idx = world.query(view, scratch).slice()
   const colors = v.theme.colors
   // world-locked ground under the board so module insets never show the panel glass
@@ -101,7 +101,18 @@ export function paintBoard(
     c.restore()
   }
   c.globalAlpha = 1
-  // black border passes: every function, then heavier module boundaries
+  // slab front faces on module bottom edges - the tilted-board depth cue - plus
+  // a thin light bevel on top edges, then the black border passes
+  const face = Math.min(16 * dpr, Math.max(5 * dpr, Math.round(0.3 * cw * cam.z * dpr)))
+  for (const m of world.mods) {
+    if (m.x > view.x + view.w || m.x + m.w < view.x || m.y > view.y + view.h || m.y + m.h < view.y) continue
+    const mx0 = projX(m.x)
+    const mx1 = projX(m.x + m.w)
+    c.fillStyle = 'rgba(22,18,12,0.88)'
+    c.fillRect(mx0, projY(m.y + m.h), mx1 - mx0, face)
+    c.fillStyle = 'rgba(255,255,255,0.16)'
+    c.fillRect(mx0, projY(m.y), mx1 - mx0, Math.max(1, Math.round(1.5 * dpr)))
+  }
   const bw = Math.max(2, Math.round(0.06 * cw * cam.z * dpr))
   c.strokeStyle = '#141414'
   c.lineWidth = bw

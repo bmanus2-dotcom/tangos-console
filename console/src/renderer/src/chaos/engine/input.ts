@@ -67,7 +67,7 @@ export class InputController {
     if (this.down) {
       if (!this.dragged && Math.hypot(p.x - this.downX, p.y - this.downY) > 4) this.dragged = true
       if (this.dragged) {
-        this.engine.panBy(p.x - this.lastX, p.y - this.lastY)
+        this.engine.drag(this.downX, this.downY, p.x, p.y, p.x - this.lastX, p.y - this.lastY)
         this.lastX = p.x
         this.lastY = p.y
         return
