@@ -39,9 +39,8 @@ export function isDimmed(f: AtlasFunction, v: PaintView): boolean {
   )
 }
 
-/** Tiles + module borders/labels, painted in world space. The ctx transform must
- *  already map world units to device px. Visual parity with Treemap.tsx. */
-export function paintClassicBase(
+/** Flat tiles in world space. The ctx transform must already map world -> device px. */
+export function paintTiles(
   ctx: CanvasRenderingContext2D,
   world: World,
   view: Rect,
@@ -55,7 +54,10 @@ export function paintClassicBase(
     ctx.fillRect(n.x, n.y, Math.max(0.5, n.w - 0.5), Math.max(0.5, n.h - 0.5))
   }
   ctx.globalAlpha = 1
+}
 
+/** Module borders + labels, world space. Visual parity with Treemap.tsx. */
+export function paintModuleChrome(ctx: CanvasRenderingContext2D, world: World, v: PaintView): void {
   for (const m of world.mods) {
     const sel = v.moduleFilter === m.module
     ctx.strokeStyle = sel ? v.theme.colors.moduleStroke : 'rgba(13,58,92,0.55)'
@@ -71,4 +73,16 @@ export function paintClassicBase(
       ctx.fillText(m.module, m.x + 4, m.y + 12)
     }
   }
+}
+
+/** The full static base: tiles then module chrome. */
+export function paintClassicBase(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  view: Rect,
+  v: PaintView,
+  scratch: number[]
+): void {
+  paintTiles(ctx, world, view, v, scratch)
+  paintModuleChrome(ctx, world, v)
 }

@@ -83,16 +83,32 @@ export default function ChaosViewer({
     })
   }, [colorBy, authorColors, authorResolve, authorFilter, moduleFilter, showNearMiss, selectedId, theme])
 
-  function onClick(e: React.MouseEvent): void {
+  function canvasPos(e: React.MouseEvent): { x: number; y: number } | null {
     const cvs = canvasRef.current
-    if (!cvs) return
+    if (!cvs) return null
     const r = cvs.getBoundingClientRect()
-    engineRef.current?.click(e.clientX - r.left, e.clientY - r.top)
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
+
+  function onClick(e: React.MouseEvent): void {
+    const p = canvasPos(e)
+    if (p) engineRef.current?.click(p.x, p.y)
+  }
+
+  function onPointerMove(e: React.PointerEvent): void {
+    const p = canvasPos(e)
+    if (p) engineRef.current?.pointerMove(p.x, p.y)
   }
 
   return (
     <div className="atlas-treemap aero-panel fill" ref={wrapRef} style={{ position: 'relative' }}>
-      <canvas ref={canvasRef} onClick={onClick} style={{ display: 'block', cursor: 'pointer', borderRadius: 8 }} />
+      <canvas
+        ref={canvasRef}
+        onClick={onClick}
+        onPointerMove={onPointerMove}
+        onPointerLeave={() => engineRef.current?.pointerLeave()}
+        style={{ display: 'block', cursor: 'pointer', borderRadius: 8 }}
+      />
     </div>
   )
 }
