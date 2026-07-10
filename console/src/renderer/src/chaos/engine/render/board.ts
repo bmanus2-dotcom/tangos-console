@@ -21,10 +21,22 @@ export function terrainKind(f: AtlasFunction, v: PaintView): 'desert' | 'plow' |
   return 'desert'
 }
 
-/** Civ-style board: a world-aligned grid of terrain tiles clipped per function,
- *  heavy black borders between functions and heavier ones between modules.
- *  Painted in DEVICE space with rounded cell edges so tiles butt perfectly -
- *  no AA seams - and imageSmoothingEnabled=false for crisp pixels. Bake-only. */
+/** Status -> block elevation (fraction of full lift): progress literally rises
+ *  out of the ground - desert flats, plowed steps, tall corn plateaus. */
+const HEIGHT: Record<'desert' | 'plow' | 'corn', number> = { desert: 0.2, plow: 0.55, corn: 1 }
+
+/** Darkened terrain tones for the extruded front faces. */
+const FACE: Record<'desert' | 'plow' | 'corn', string> = {
+  desert: '#8a6f45',
+  plow: '#93701d',
+  corn: '#276231'
+}
+
+/** Civ-style tilted board: a world-aligned grid of terrain tiles clipped per
+ *  function, with every function extruded into a raised block - its height set
+ *  by status - drawn painter-ordered top row first so the dark front faces of
+ *  each step down stay visible. Device-space with rounded cell edges (no AA
+ *  seams) and imageSmoothingEnabled=false for crisp pixels. Bake-only. */
 export function paintBoard(
   c: CanvasRenderingContext2D,
   world: World,
@@ -45,10 +57,14 @@ export function paintBoard(
   const projX = (wx: number): number => Math.round(((wx - cam.x) * cam.z + cam.vw / 2 + ovX) * dpr)
   const projY = (wy: number): number => Math.round(((wy - cam.y) * cam.z * cam.sy + cam.vh / 2 + ovY) * dpr)
   const idx = world.query(view, scratch).slice()
+  // painter's order: top of the screen first, so lower blocks overpaint the
+  // protruding faces of the row above them
+  idx.sort((a, b) => world.fns[a].y - world.fns[b].y)
   const colors = v.theme.colors
-  // world-locked ground under the board so module insets never show the panel glass
   c.fillStyle = colors.ground
   c.fillRect(projX(0), projY(0), projX(world.w) - projX(0), projY(world.h) - projY(0))
+  const fullLift = Math.round(Math.min(18, Math.max(4, 0.35 * cw * cam.z)) * dpr)
+  const liftOf = (kind: 'desert' | 'plow' | 'corn'): number => Math.round(fullLift * HEIGHT[kind])
   for (const i of idx) {
     const n = world.fns[i]
     const x0 = projX(n.x)
@@ -57,11 +73,15 @@ export function paintBoard(
     const y1 = projY(n.y + n.h)
     if (x1 <= x0 || y1 <= y0) continue
     const kind = terrainKind(n.f, v)
+    const lift = liftOf(kind)
     c.save()
     c.beginPath()
-    c.rect(x0, y0, x1 - x0, y1 - y0)
+    c.rect(x0, y0 - lift, x1 - x0, y1 - y0 + lift)
     c.clip()
     c.globalAlpha = isDimmed(n.f, v) ? 0.3 : 1
+    // front face (the block's visible thickness), then the lifted top face
+    c.fillStyle = FACE[kind]
+    c.fillRect(x0, y1 - lift, x1 - x0, lift)
     if (bp.atlas && bp.layout) {
       const range = bp.layout.terrain[kind]
       const decor = bp.layout.decor?.[kind]
@@ -70,8 +90,8 @@ export function paintBoard(
       const gy0 = Math.floor(Math.max(n.y, view.y) / cw)
       const gy1 = Math.floor(Math.min(n.y + n.h, view.y + view.h) / cw)
       for (let gy = gy0; gy <= gy1; gy++) {
-        const dy = projY(gy * cw)
-        const dh = projY((gy + 1) * cw) - dy
+        const dy = projY(gy * cw) - lift
+        const dh = projY((gy + 1) * cw) - projY(gy * cw)
         if (dh <= 0) continue
         for (let gx = gx0; gx <= gx1; gx++) {
           const dx = projX(gx * cw)
@@ -96,29 +116,23 @@ export function paintBoard(
       }
     } else {
       c.fillStyle = kind === 'corn' ? colors.matched : kind === 'plow' ? colors.nearMiss : colors.unmatched
-      c.fillRect(x0, y0, x1 - x0, y1 - y0)
+      c.fillRect(x0, y0 - lift, x1 - x0, y1 - y0)
     }
+    // a light lip on the top edge sells the raised slab
+    c.fillStyle = 'rgba(255,255,255,0.14)'
+    c.fillRect(x0, y0 - lift, x1 - x0, Math.max(1, Math.round(dpr)))
     c.restore()
   }
   c.globalAlpha = 1
-  // slab front faces on module bottom edges - the tilted-board depth cue - plus
-  // a thin light bevel on top edges, then the black border passes
-  const face = Math.min(16 * dpr, Math.max(5 * dpr, Math.round(0.3 * cw * cam.z * dpr)))
-  for (const m of world.mods) {
-    if (m.x > view.x + view.w || m.x + m.w < view.x || m.y > view.y + view.h || m.y + m.h < view.y) continue
-    const mx0 = projX(m.x)
-    const mx1 = projX(m.x + m.w)
-    c.fillStyle = 'rgba(22,18,12,0.88)'
-    c.fillRect(mx0, projY(m.y + m.h), mx1 - mx0, face)
-    c.fillStyle = 'rgba(255,255,255,0.16)'
-    c.fillRect(mx0, projY(m.y), mx1 - mx0, Math.max(1, Math.round(1.5 * dpr)))
-  }
+  // black border passes: every function outlined at its lifted top face, then
+  // heavier module boundaries at ground level
   const bw = Math.max(2, Math.round(0.06 * cw * cam.z * dpr))
   c.strokeStyle = '#141414'
   c.lineWidth = bw
   for (const i of idx) {
     const n = world.fns[i]
-    c.strokeRect(projX(n.x), projY(n.y), projX(n.x + n.w) - projX(n.x), projY(n.y + n.h) - projY(n.y))
+    const lift = liftOf(terrainKind(n.f, v))
+    c.strokeRect(projX(n.x), projY(n.y) - lift, projX(n.x + n.w) - projX(n.x), projY(n.y + n.h) - projY(n.y))
   }
   c.lineWidth = Math.max(3, Math.round(bw * 1.8))
   for (const m of world.mods) {
