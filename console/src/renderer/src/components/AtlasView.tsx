@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Search, Plus, Minus, X, Database, Cloud, HardDrive, Users, ExternalLink } from 'lucide-react'
 import type { AtlasDb, AtlasFunction, BatchItem, GithubCredits } from '../../../shared/types'
 import ChaosViewer from '../chaos/ChaosViewer'
+import { getTheme } from '../chaos/themes'
 import { sortFns, SORT_LABELS, type SortKey } from '../atlas/sort'
 
 const pct = (n: number, d: number): string => (d ? `${((n / d) * 100).toFixed(1)}%` : '0%')
@@ -30,6 +31,7 @@ export default function AtlasView({
   const [moduleFilter, setModuleFilter] = useState<string | null>(null)
   const [sort, setSort] = useState<SortKey>('unmatched')
   const [colorBy, setColorBy] = useState<'status' | 'author'>('status')
+  const [viewerTheme, setViewerTheme] = useState('classic')
   const [authorFilter, setAuthorFilter] = useState<string | null>(null)
   const [showNearMiss, setShowNearMiss] = useState(true)
   const [selectedFn, setSelectedFn] = useState<AtlasFunction | null>(null)
@@ -254,22 +256,21 @@ export default function AtlasView({
         }}
         selectedId={selectedFn?.id}
         colorBy={colorBy}
+        onColorBy={setColorBy}
         authorColors={authorColors}
         authorResolve={keyToLogin}
         authorFilter={authorFilter}
         showNearMiss={showNearMiss}
+        theme={viewerTheme}
+        onTheme={setViewerTheme}
       />
 
       <div className="treemap-legend">
-        <div className="seg">
-          <button className={colorBy === 'status' ? 'on' : ''} onClick={() => setColorBy('status')}>Status</button>
-          <button className={colorBy === 'author' ? 'on' : ''} onClick={() => setColorBy('author')}>Contributor</button>
-        </div>
         {colorBy === 'status' ? (
           <>
-            <span><i className="lg" style={{ background: '#3fc45f' }} /> matched</span>
-            {showNearMiss && <span><i className="lg" style={{ background: '#eab308' }} /> near-miss</span>}
-            <span><i className="lg" style={{ background: '#b9cadb' }} /> unmatched</span>
+            <span><i className="lg" style={{ background: getTheme(viewerTheme).colors.matched }} /> matched</span>
+            {showNearMiss && <span><i className="lg" style={{ background: getTheme(viewerTheme).colors.nearMiss }} /> near-miss</span>}
+            <span><i className="lg" style={{ background: getTheme(viewerTheme).colors.unmatched }} /> unmatched</span>
             <label className="tm-check">
               <input type="checkbox" checked={showNearMiss} onChange={(e) => setShowNearMiss(e.target.checked)} />
               near-misses
@@ -278,7 +279,7 @@ export default function AtlasView({
         ) : (
           <span className="hint" style={{ margin: 0 }}>each matched function colored by its author</span>
         )}
-        <span className="hint" style={{ margin: 0 }}>· click a function to select</span>
+        <span className="hint" style={{ margin: 0 }}>· click to fly in · scroll to zoom · Esc backs out</span>
         <div style={{ flex: 1 }} />
         {moduleFilter && (
           <button className="mini-btn" onClick={() => window.tangos.openModulePopout(moduleFilter)} title={`open ${moduleFilter} in its own window`}>

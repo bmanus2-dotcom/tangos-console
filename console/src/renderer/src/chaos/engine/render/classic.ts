@@ -72,10 +72,9 @@ export function paintModuleBorders(ctx: CanvasRenderingContext2D, world: World, 
   }
 }
 
-/** Labels at constant screen size: module names always (when their rect is large
- *  enough on screen), function names fading in once a tile projects tall enough.
- *  The ctx transform must map CSS px (dpr applied); positions are projected. */
-export function paintLabels(
+/** Function name labels at constant screen size, fading in once a tile projects
+ *  tall enough. The ctx transform must map CSS px (dpr applied). */
+export function paintFnLabels(
   ctx: CanvasRenderingContext2D,
   world: World,
   view: Rect,
@@ -104,6 +103,17 @@ export function paintLabels(
     ctx.fillText(n.f.name, p.x + 4, p.y + 13, wpx - 8)
   }
   ctx.globalAlpha = 1
+}
+
+/** Module name labels at constant screen size (parity with the classic Treemap). */
+export function paintModuleLabels(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  v: PaintView,
+  cam: Camera
+): void {
+  ctx.font = LABEL_FONT
+  ctx.lineJoin = 'round'
   for (const m of world.mods) {
     const wpx = m.w * cam.z
     const hpx = m.h * cam.z

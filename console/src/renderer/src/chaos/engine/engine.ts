@@ -3,13 +3,23 @@ import { buildWorld } from '../layout'
 import type { FnNode, World } from '../layout'
 import { SourceCache } from '../sourceCache'
 import { getTheme } from '../themes'
+import { TILE_PX } from '../themes/types'
 import type { Rect } from '../types'
-import { clamp, easeInOutCubic } from './anim'
+import { clamp, easeInOutCubic, mulberry32, smoothstep } from './anim'
 import { NameBubble } from './bubbles'
 import { Camera } from './camera'
 import { LodState } from './lod'
 import { RippleField, rippleBounds, rippleLift } from './ripple'
-import { fnColor, isDimmed, paintLabels, paintModuleBorders, paintTiles } from './render/classic'
+import { paintBoard } from './render/board'
+import type { BoardPaint } from './render/board'
+import {
+  fnColor,
+  isDimmed,
+  paintFnLabels,
+  paintModuleBorders,
+  paintModuleLabels,
+  paintTiles
+} from './render/classic'
 import type { PaintView } from './render/classic'
 import { paintCode } from './render/code'
 
@@ -17,6 +27,7 @@ export interface EngineCallbacks {
   onModule: (m: string | null) => void
   onFunction: (f: AtlasFunction) => void
   onBand?: (band: 1 | 2 | 3) => void
+  onBoard?: (on: boolean) => void
 }
 
 export interface ViewOptions {
@@ -105,6 +116,15 @@ export class ChaosEngine {
   private readonly sources = new SourceCache()
   private travelAnim: { from: Rect; to: Rect; t0: number; dur: number } | null = null
   private lastTravelAt = 0
+  private board = false
+  private cloud: { t0: number; dur: number; dir: 1 | -1; switched: boolean } | null = null
+  private camBeforeBoard: { x: number; y: number; z: number } | null = null
+  private boardCell = 2
+  private atlasImg: CanvasImageSource | null = null
+  private atlasTheme = ''
+  private cloudSprites: HTMLCanvasElement[] | null = null
+  private shadowSprite: HTMLCanvasElement | null = null
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(canvas: HTMLCanvasElement, cb: EngineCallbacks) {
     this.canvas = canvas
@@ -154,6 +174,7 @@ export class ChaosEngine {
       'themeId'
     ]
     if (bakeKeys.some((k) => prev[k] !== this.opts[k])) this.needBake = true
+    if (next.themeId && next.themeId !== prev.themeId) this.ensureAtlas()
     if ('moduleFilter' in next && next.moduleFilter !== prev.moduleFilter) {
       // externally requested focus (toolbar chip, list selection, detail-bar close)
       if (this.opts.moduleFilter !== this.lastEmittedModule) this.externalFocus(this.opts.moduleFilter)
@@ -240,13 +261,37 @@ export class ChaosEngine {
     this.wake()
   }
 
+  /** Enter the Sid Meier board through the cloud layer. The theme/zoom switch
+   *  happens at the fully-clouded midpoint, hidden under the cover. */
+  enterBoard(): void {
+    if (this.board || this.cloud || !this.world) return
+    this.cloud = { t0: performance.now(), dur: 900, dir: 1, switched: false }
+    this.camBeforeBoard = { x: this.cam.x, y: this.cam.y, z: this.cam.z }
+    this.ensureClouds()
+    this.ensureShadow()
+    this.ensureAtlas()
+    this.wake()
+  }
+
+  exitBoard(): void {
+    if (!this.board || this.cloud) return
+    this.cloud = { t0: performance.now(), dur: 900, dir: -1, switched: false }
+    this.wake()
+  }
+
   destroy(): void {
     this.disposed = true
     if (this.rafId != null) cancelAnimationFrame(this.rafId)
     this.rafId = null
+    if (this.wakeTimer != null) clearTimeout(this.wakeTimer)
+    this.wakeTimer = null
   }
 
   private escapeOut(): boolean {
+    if (this.board || this.cloud) {
+      this.exitBoard()
+      return true
+    }
     if (!this.world) return false
     const now = performance.now()
     if (this.lod.band === 3) {
@@ -366,10 +411,99 @@ export class ChaosEngine {
 
   private wake(): void {
     if (this.disposed || this.rafId != null) return
+    if (this.wakeTimer != null) {
+      clearTimeout(this.wakeTimer)
+      this.wakeTimer = null
+    }
     this.rafId = requestAnimationFrame(() => {
       this.rafId = null
       this.frame()
     })
+  }
+
+  /** Low-rate wakeup for the board's idle drift - half rAF rate is plenty. */
+  private wakeSoon(ms: number): void {
+    if (this.disposed || this.rafId != null || this.wakeTimer != null) return
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = null
+      this.wake()
+    }, ms)
+  }
+
+  private activateBoard(): void {
+    if (!this.world) return
+    this.board = true
+    this.cb.onBoard?.(true)
+    this.boardCell = Math.sqrt(Math.max(4, this.world.medianFnArea)) / 4
+    this.cam.setZoomOverride(16 / this.boardCell, 64 / this.boardCell)
+    this.needBake = true
+  }
+
+  private deactivateBoard(): void {
+    this.board = false
+    this.cb.onBoard?.(false)
+    this.cam.setZoomOverride(null, null)
+    if (this.camBeforeBoard) {
+      this.cam.jumpTo(this.camBeforeBoard.x, this.camBeforeBoard.y, this.camBeforeBoard.z)
+      this.camBeforeBoard = null
+    }
+    this.needBake = true
+  }
+
+  private ensureAtlas(): void {
+    const theme = getTheme(this.opts.themeId)
+    if (theme.mode !== 'sprite') return
+    if (this.atlasTheme === theme.id && this.atlasImg) return
+    const want = theme.id
+    this.atlasTheme = want
+    this.atlasImg = null
+    theme
+      .resolveAtlas()
+      .then((img) => {
+        if (this.atlasTheme !== want || this.disposed) return
+        this.atlasImg = img
+        this.needBake = true
+        this.wake()
+      })
+      .catch(() => {})
+  }
+
+  private ensureClouds(): void {
+    if (this.cloudSprites) return
+    const rnd = mulberry32(0x51f0c1)
+    const sprites: HTMLCanvasElement[] = []
+    for (let v = 0; v < 4; v++) {
+      const c = document.createElement('canvas')
+      c.width = 160
+      c.height = 96
+      const g = c.getContext('2d')
+      if (!g) continue
+      const rows = 8
+      for (let r = 0; r < rows; r++) {
+        const k = Math.sin((Math.PI * (r + 0.5)) / rows)
+        const w = Math.round((60 + rnd() * 60) * k + 30)
+        const x = Math.round((160 - w) / 2 + (rnd() - 0.5) * 24)
+        g.fillStyle = r >= rows - 2 ? 'rgba(214,226,238,0.95)' : 'rgba(255,255,255,0.96)'
+        g.fillRect(x, 8 + r * 10, w, 10)
+      }
+      sprites.push(c)
+    }
+    this.cloudSprites = sprites
+  }
+
+  private ensureShadow(): void {
+    if (this.shadowSprite) return
+    const c = document.createElement('canvas')
+    c.width = 256
+    c.height = 160
+    const g = c.getContext('2d')
+    if (!g) return
+    const grad = g.createRadialGradient(128, 80, 10, 128, 80, 120)
+    grad.addColorStop(0, 'rgba(20,30,40,0.14)')
+    grad.addColorStop(1, 'rgba(20,30,40,0)')
+    g.fillStyle = grad
+    g.fillRect(0, 0, 256, 160)
+    this.shadowSprite = c
   }
 
   private rebuild(): void {
@@ -435,21 +569,33 @@ export class ChaosEngine {
       h: vr.h + (2 * ovY) / cam.z
     }
     const v = this.paintView()
-    c.setTransform(
-      dpr * cam.z,
-      0,
-      0,
-      dpr * cam.z,
-      dpr * (ovX + cam.vw / 2 - cam.x * cam.z),
-      dpr * (ovY + cam.vh / 2 - cam.y * cam.z)
-    )
-    paintTiles(c, this.world, view, v, this.scratch)
-    paintModuleBorders(c, this.world, v, 1 / cam.z)
-    // labels + code render at constant screen size - separate passes in screen coords
-    const codeVisible = this.lod.band >= 2
-    c.setTransform(dpr, 0, 0, dpr, ovX * dpr, ovY * dpr)
-    paintLabels(c, this.world, view, v, cam, this.scratch, codeVisible)
-    if (codeVisible) paintCode(c, this.world, view, v, cam, this.sources, this.scratch)
+    if (this.board) {
+      const theme = getTheme(this.opts.themeId)
+      const bp: BoardPaint =
+        theme.mode === 'sprite'
+          ? { atlas: this.atlasImg, tilePx: theme.tilePx, layout: theme.layout, cellWorld: this.boardCell }
+          : { atlas: null, tilePx: TILE_PX, layout: null, cellWorld: this.boardCell }
+      paintBoard(c, this.world, view, v, cam, dpr, ovX, ovY, bp, this.scratch)
+      c.setTransform(dpr, 0, 0, dpr, ovX * dpr, ovY * dpr)
+      paintModuleLabels(c, this.world, v, cam)
+    } else {
+      c.setTransform(
+        dpr * cam.z,
+        0,
+        0,
+        dpr * cam.z,
+        dpr * (ovX + cam.vw / 2 - cam.x * cam.z),
+        dpr * (ovY + cam.vh / 2 - cam.y * cam.z)
+      )
+      paintTiles(c, this.world, view, v, this.scratch)
+      paintModuleBorders(c, this.world, v, 1 / cam.z)
+      // labels + code render at constant screen size - separate passes in screen coords
+      const codeVisible = this.lod.band >= 2
+      c.setTransform(dpr, 0, 0, dpr, ovX * dpr, ovY * dpr)
+      paintFnLabels(c, this.world, view, v, cam, this.scratch, codeVisible)
+      paintModuleLabels(c, this.world, v, cam)
+      if (codeVisible) paintCode(c, this.world, view, v, cam, this.sources, this.scratch)
+    }
     this.bakeCam = { x: cam.x, y: cam.y, z: cam.z, vw: cam.vw, vh: cam.vh, ovX, ovY }
     this.needBake = false
     this.lastBakeMs = performance.now() - t0
@@ -485,6 +631,15 @@ export class ChaosEngine {
       this.lastBand = band
       this.cb.onBand?.(band)
     }
+    if (this.cloud) {
+      const tCloud = (now - this.cloud.t0) / this.cloud.dur
+      if (tCloud >= 0.5 && !this.cloud.switched) {
+        this.cloud.switched = true
+        if (this.cloud.dir === 1) this.activateBoard()
+        else this.deactivateBoard()
+      }
+      if (tCloud >= 1) this.cloud = null
+    }
     const settled = this.cam.settled(now)
     if (settled && (this.needBake || !this.bakeMatches())) this.bake()
     const ripplesActive = this.ripples.step(now)
@@ -492,24 +647,74 @@ export class ChaosEngine {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     this.blitBase()
-    if (ripplesActive && band === 1 && settled) this.drawRipples(now)
+    if (ripplesActive && band === 1 && settled && !this.board) this.drawRipples(now)
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    if (this.board && !this.cloud) this.drawBoardShadows(now)
     this.bubble.draw(ctx, this.cam, now)
     this.drawSelection(now)
+    const cloudsActive = this.drawClouds(now)
     this.emitFocus(settled, band)
     this.lastFrameMs = performance.now() - now
     if (window.chaosPerf) this.drawPerf()
     // keep frames coming only while something is alive; otherwise the loop sleeps
+    // (the board's idle drift ticks at half rate through wakeSoon)
     if (
       camMoving ||
       !settled ||
       ripplesActive ||
+      cloudsActive ||
       this.bubble.needsFrame(now) ||
       this.pendingBubble ||
       this.travelAnim
     ) {
       this.wake()
+    } else if (this.board) {
+      this.wakeSoon(33)
     }
+  }
+
+  /** Two soft cloud shadows drifting over the board - the living-map idle motion. */
+  private drawBoardShadows(now: number): void {
+    const s = this.shadowSprite
+    if (!s) return
+    const ctx = this.ctx
+    const t = now / 1000
+    const pts = [
+      { x: this.cssW * (0.32 + 0.26 * Math.sin(t * 0.05)), y: this.cssH * (0.35 + 0.22 * Math.cos(t * 0.041)) },
+      { x: this.cssW * (0.66 + 0.24 * Math.cos(t * 0.037)), y: this.cssH * (0.62 + 0.24 * Math.sin(t * 0.047)) }
+    ]
+    for (const p of pts) ctx.drawImage(s, p.x - 190, p.y - 120, 380, 240)
+  }
+
+  /** Cloud layer transition: puffs drift across while coverage ramps to a solid
+   *  sheet at the midpoint (where the board switch happens), then reveals. */
+  private drawClouds(now: number): boolean {
+    const cl = this.cloud
+    if (!cl) return false
+    const t = clamp((now - cl.t0) / cl.dur, 0, 1)
+    const coverage = t < 0.5 ? smoothstep(0.02, 0.45, t) : 1 - smoothstep(0.55, 0.98, t)
+    const sprites = this.cloudSprites
+    if (!sprites || !sprites.length) return t < 1
+    const ctx = this.ctx
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    const span = this.cssW + 480
+    for (let i = 0; i < 14; i++) {
+      const layer = i % 2
+      const speed = layer ? 120 : 70
+      const scale = layer ? 2.7 : 2
+      const x = ((i * 331 + (now / 1000) * speed) % span) - 240
+      const y = ((i * 97) % Math.max(1, this.cssH - 40)) - 30
+      ctx.globalAlpha = coverage * (layer ? 0.95 : 0.8)
+      ctx.drawImage(sprites[i % sprites.length], x, y, 160 * scale, 96 * scale)
+    }
+    const sheet = t < 0.5 ? smoothstep(0.3, 0.48, t) : 1 - smoothstep(0.52, 0.7, t)
+    if (sheet > 0) {
+      ctx.globalAlpha = sheet
+      ctx.fillStyle = '#eef4fa'
+      ctx.fillRect(0, 0, this.cssW, this.cssH)
+    }
+    ctx.globalAlpha = 1
+    return t < 1
   }
 
   /** While the camera rests at band 2+, the module under the camera center is the
@@ -532,7 +737,7 @@ export class ChaosEngine {
    *  name pops - modules at band 1, functions at band 2+. Hidden while moving. */
   private updateHover(now: number, settled: boolean): void {
     this.pendingBubble = false
-    if (!this.world || !this.pointer.inside || !settled) {
+    if (!this.world || !this.pointer.inside || !settled || this.cloud) {
       this.bubble.hide(now)
       return
     }
@@ -622,7 +827,8 @@ export class ChaosEngine {
     ctx.globalAlpha = 1
     paintModuleBorders(ctx, world, v, 1 / cam.z)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    paintLabels(ctx, world, view, v, cam, this.scratch, false)
+    paintFnLabels(ctx, world, view, v, cam, this.scratch, false)
+    paintModuleLabels(ctx, world, v, cam)
     ctx.restore()
   }
 

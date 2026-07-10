@@ -32,6 +32,8 @@ export class Camera {
   worldH = 1
   private zMin = 0.01
   private zMax = 64
+  private zOverrideMin: number | null = null
+  private zOverrideMax: number | null = null
   private zTarget = 1
   private zVel = 0
   private anchorWX = 0
@@ -44,6 +46,36 @@ export class Camera {
 
   get fitZ(): number {
     return Math.min(this.vw / this.worldW, this.vh / this.worldH)
+  }
+
+  private get zLo(): number {
+    return this.zOverrideMin ?? this.zMin
+  }
+
+  private get zHi(): number {
+    return this.zOverrideMax ?? this.zMax
+  }
+
+  /** Board mode narrows the zoom range so terrain cells stay 16-64 px. Pass nulls
+   *  to restore the world-derived clamps. */
+  setZoomOverride(min: number | null, max: number | null): void {
+    this.zOverrideMin = min
+    this.zOverrideMax = max
+    this.fly = null
+    this.z = clamp(this.z, this.zLo, this.zHi)
+    this.zTarget = clamp(this.zTarget, this.zLo, this.zHi)
+    this.zVel = 0
+    this.clampPan()
+  }
+
+  jumpTo(x: number, y: number, z: number): void {
+    this.fly = null
+    this.z = clamp(z, this.zLo, this.zHi)
+    this.zTarget = this.z
+    this.zVel = 0
+    this.x = x
+    this.y = y
+    this.clampPan()
   }
 
   get overscanX(): number {
@@ -64,8 +96,8 @@ export class Camera {
     this.worldH = Math.max(1, h)
     this.zMin = this.fitZ
     this.zMax = Math.max(zMax, this.fitZ * 2)
-    this.z = clamp(this.z, this.zMin, this.zMax)
-    this.zTarget = clamp(this.zTarget, this.zMin, this.zMax)
+    this.z = clamp(this.z, this.zLo, this.zHi)
+    this.zTarget = clamp(this.zTarget, this.zLo, this.zHi)
     this.clampPan()
   }
 
@@ -76,8 +108,8 @@ export class Camera {
   jumpToRect(r: Rect, padFrac: number): void {
     const z = clamp(
       Math.min(this.vw / (r.w * (1 + 2 * padFrac)), this.vh / (r.h * (1 + 2 * padFrac))),
-      this.zMin,
-      this.zMax
+      this.zLo,
+      this.zHi
     )
     this.fly = null
     this.z = z
@@ -92,8 +124,8 @@ export class Camera {
   flyToRect(r: Rect, padFrac: number, now: number): number {
     const z1 = clamp(
       Math.min(this.vw / (r.w * (1 + 2 * padFrac)), this.vh / (r.h * (1 + 2 * padFrac))),
-      this.zMin,
-      this.zMax
+      this.zLo,
+      this.zHi
     )
     const x1 = this.clampAxisAt(r.x + r.w / 2, this.worldW, this.vw, z1)
     const y1 = this.clampAxisAt(r.y + r.h / 2, this.worldH, this.vh, z1)
@@ -112,7 +144,7 @@ export class Camera {
 
   wheelZoomAt(sx: number, sy: number, deltaY: number, now: number): void {
     this.fly = null
-    this.zTarget = clamp(this.zTarget * Math.pow(WHEEL_FACTOR, -deltaY), this.zMin, this.zMax)
+    this.zTarget = clamp(this.zTarget * Math.pow(WHEEL_FACTOR, -deltaY), this.zLo, this.zHi)
     if (now > this.gestureUntil || Math.hypot(sx - this.anchorSX, sy - this.anchorSY) > 3) {
       const w = this.screenToWorld(sx, sy)
       this.anchorWX = w.x
