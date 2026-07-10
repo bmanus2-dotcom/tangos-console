@@ -18,6 +18,10 @@ export interface PaintView {
 const AUTHOR_FALLBACK = '#9aa7b5'
 const LABEL_FONT = '600 11px "Segoe UI", system-ui, sans-serif'
 
+/** Tiles projecting at least this large get the code fill instead of a name label. */
+export const CODE_MIN_H = 60
+export const CODE_MIN_W = 80
+
 function resolveAuthor(v: PaintView, a?: string): string {
   return a ? v.authorResolve?.get(a) ?? a : ''
 }
@@ -77,7 +81,8 @@ export function paintLabels(
   view: Rect,
   v: PaintView,
   cam: Camera,
-  scratch: number[]
+  scratch: number[],
+  codeVisible: boolean
 ): void {
   ctx.font = LABEL_FONT
   ctx.lineJoin = 'round'
@@ -87,6 +92,7 @@ export function paintLabels(
     if (hpx < 40) continue
     const wpx = n.w * cam.z
     if (wpx < 50) continue
+    if (codeVisible && hpx >= CODE_MIN_H && wpx >= CODE_MIN_W) continue // the code fill draws its own header
     const alpha = smoothstep(40, 70, hpx) * (isDimmed(n.f, v) ? 0.14 : 1)
     if (alpha < 0.05) continue
     const p = cam.worldToScreen(n.x, n.y)

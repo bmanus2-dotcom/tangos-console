@@ -88,7 +88,8 @@ export class Camera {
     this.clampPan()
   }
 
-  flyToRect(r: Rect, padFrac: number, now: number): void {
+  /** Returns the flight duration in ms so companions (selection bubble) can sync. */
+  flyToRect(r: Rect, padFrac: number, now: number): number {
     const z1 = clamp(
       Math.min(this.vw / (r.w * (1 + 2 * padFrac)), this.vh / (r.h * (1 + 2 * padFrac))),
       this.zMin,
@@ -106,6 +107,7 @@ export class Camera {
     this.zTarget = z1
     this.zVel = 0
     this.lastNudge = now
+    return dur
   }
 
   wheelZoomAt(sx: number, sy: number, deltaY: number, now: number): void {

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import type {
   RepoState, McpState, TangosDescriptor, GenerateReport, ActivityEvent, ActivityRun, RunResult, PreflightItem,
-  Batch, BatchDraft, BatchItem, AtlasDb, Review, GithubCredits, ConnectedClient, SecretsInfo,
+  Batch, BatchDraft, BatchItem, AtlasDb, AtlasSource, Review, GithubCredits, ConnectedClient, SecretsInfo,
   AiAgent, RepoUpdateStatus, AppUpdateInfo
 } from '../../shared/types'
 
@@ -41,6 +41,7 @@ export interface TangosApi {
   atlasCurrent(): Promise<AtlasDb | null>
   atlasGenerate(): Promise<AtlasDb | null>
   recentAdds(sinceHours?: number): Promise<string[]>
+  atlasSource(req: { id: string; srcPath?: string }): Promise<AtlasSource | null>
   openModulePopout(module: string): Promise<void>
   addDraftItem(item: BatchItem): Promise<void>
   onDraftAdd(cb: (item: BatchItem) => void): () => void

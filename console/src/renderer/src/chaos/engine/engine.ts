@@ -1,14 +1,17 @@
 import type { AtlasDb, AtlasFunction } from '../../../../shared/types'
 import { buildWorld } from '../layout'
-import type { World } from '../layout'
+import type { FnNode, World } from '../layout'
+import { SourceCache } from '../sourceCache'
 import { getTheme } from '../themes'
-import { clamp } from './anim'
+import type { Rect } from '../types'
+import { clamp, easeInOutCubic } from './anim'
 import { NameBubble } from './bubbles'
 import { Camera } from './camera'
 import { LodState } from './lod'
 import { RippleField, rippleBounds, rippleLift } from './ripple'
 import { fnColor, isDimmed, paintLabels, paintModuleBorders, paintTiles } from './render/classic'
 import type { PaintView } from './render/classic'
+import { paintCode } from './render/code'
 
 export interface EngineCallbacks {
   onModule: (m: string | null) => void
@@ -40,6 +43,17 @@ const DEFAULT_OPTS: ViewOptions = {
   moduleFilter: null,
   showNearMiss: true,
   themeId: 'classic'
+}
+
+const TRAVEL_KEYS: Record<string, [number, number]> = {
+  w: [0, -1],
+  a: [-1, 0],
+  s: [0, 1],
+  d: [1, 0],
+  arrowup: [0, -1],
+  arrowleft: [-1, 0],
+  arrowdown: [0, 1],
+  arrowright: [1, 0]
 }
 
 interface BakeCam {
@@ -88,6 +102,9 @@ export class ChaosEngine {
   private pendingBubble = false
   private lastEmittedModule: string | null = null
   private lastBand: 1 | 2 | 3 = 1
+  private readonly sources = new SourceCache()
+  private travelAnim: { from: Rect; to: Rect; t0: number; dur: number } | null = null
+  private lastTravelAt = 0
 
   constructor(canvas: HTMLCanvasElement, cb: EngineCallbacks) {
     this.canvas = canvas
@@ -99,6 +116,10 @@ export class ChaosEngine {
     this.ctx = ctx
     this.base = base
     this.baseCtx = baseCtx
+    this.sources.onReady = () => {
+      this.needBake = true
+      this.wake()
+    }
   }
 
   resize(cssW: number, cssH: number, dpr: number): void {
@@ -115,6 +136,7 @@ export class ChaosEngine {
   }
 
   setData(db: AtlasDb): void {
+    if (this.db !== db) this.sources.clear()
     this.db = db
     this.rebuild()
   }
@@ -209,6 +231,8 @@ export class ChaosEngine {
   /** Returns true when the key was consumed. */
   key(k: string): boolean {
     if (k === 'Escape') return this.escapeOut()
+    const dir = TRAVEL_KEYS[k.toLowerCase()]
+    if (dir && this.lod.band === 3) return this.travel(dir[0], dir[1])
     return false
   }
 
@@ -239,6 +263,90 @@ export class ChaosEngine {
       return true
     }
     return false
+  }
+
+  /** WASD/arrow travel at band 3: pick the best-aligned neighbor, select it, and
+   *  fly the camera while the selection bubble tweens over on the same clock. */
+  private travel(dx: number, dy: number): boolean {
+    if (!this.world) return false
+    const now = performance.now()
+    if (now - this.lastTravelAt < 160) return true
+    const cur = this.travelNode()
+    if (!cur) return false
+    const hasSel = !!this.opts.selectedId && this.world.byId.has(this.opts.selectedId)
+    const target = hasSel ? this.pickNeighbor(cur, dx, dy) : cur
+    if (!target || (hasSel && target === cur)) return true
+    this.lastTravelAt = now
+    if (target.f.id !== this.opts.selectedId) {
+      this.lastEmittedModule = target.f.module // pre-acknowledge the moduleFilter echo
+      this.cb.onFunction(target.f)
+    }
+    this.sources.request(target.f)
+    const dur = this.cam.flyToRect(target, 0.45, now)
+    this.travelAnim = {
+      from: { x: cur.x, y: cur.y, w: cur.w, h: cur.h },
+      to: { x: target.x, y: target.y, w: target.w, h: target.h },
+      t0: now,
+      dur
+    }
+    this.wake()
+    return true
+  }
+
+  /** The function the travel bubble sits on: the selection when it exists, else
+   *  whatever is nearest the camera center. */
+  private travelNode(): FnNode | null {
+    if (!this.world) return null
+    if (this.opts.selectedId) {
+      const ix = this.world.byId.get(this.opts.selectedId)
+      if (ix != null) return this.world.fns[ix]
+    }
+    const hit = this.world.hitFn(this.cam.x, this.cam.y)
+    if (hit) return hit
+    const r = 80 / this.cam.z
+    const out: number[] = []
+    this.world.query({ x: this.cam.x - r, y: this.cam.y - r, w: r * 2, h: r * 2 }, out)
+    let best: FnNode | null = null
+    let bd = Infinity
+    for (const i of out) {
+      const n = this.world.fns[i]
+      const d = Math.hypot(n.x + n.w / 2 - this.cam.x, n.y + n.h / 2 - this.cam.y)
+      if (d < bd) {
+        bd = d
+        best = n
+      }
+    }
+    return best
+  }
+
+  /** Directional pick: distance penalized by misalignment; same module first,
+   *  the whole world once the module edge runs out. */
+  private pickNeighbor(cur: FnNode, dx: number, dy: number): FnNode | null {
+    const world = this.world
+    if (!world) return null
+    const cx = cur.x + cur.w / 2
+    const cy = cur.y + cur.h / 2
+    const pick = (sameModule: boolean): FnNode | null => {
+      let best: FnNode | null = null
+      let bs = Infinity
+      for (const n of world.fns) {
+        if (n === cur) continue
+        if (sameModule && n.modIx !== cur.modIx) continue
+        const vx = n.x + n.w / 2 - cx
+        const vy = n.y + n.h / 2 - cy
+        const dot = vx * dx + vy * dy
+        if (dot <= 0) continue
+        const dist = Math.hypot(vx, vy)
+        if (dist < 1e-6) continue
+        const score = dist * (1 + 2 * (1 - dot / dist))
+        if (score < bs) {
+          bs = score
+          best = n
+        }
+      }
+      return best
+    }
+    return pick(true) ?? pick(false)
   }
 
   private externalFocus(m: string | null): void {
@@ -337,9 +445,11 @@ export class ChaosEngine {
     )
     paintTiles(c, this.world, view, v, this.scratch)
     paintModuleBorders(c, this.world, v, 1 / cam.z)
-    // labels render at constant screen size - a separate pass in screen coords
+    // labels + code render at constant screen size - separate passes in screen coords
+    const codeVisible = this.lod.band >= 2
     c.setTransform(dpr, 0, 0, dpr, ovX * dpr, ovY * dpr)
-    paintLabels(c, this.world, view, v, cam, this.scratch)
+    paintLabels(c, this.world, view, v, cam, this.scratch, codeVisible)
+    if (codeVisible) paintCode(c, this.world, view, v, cam, this.sources, this.scratch)
     this.bakeCam = { x: cam.x, y: cam.y, z: cam.z, vw: cam.vw, vh: cam.vh, ovX, ovY }
     this.needBake = false
     this.lastBakeMs = performance.now() - t0
@@ -385,12 +495,19 @@ export class ChaosEngine {
     if (ripplesActive && band === 1 && settled) this.drawRipples(now)
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     this.bubble.draw(ctx, this.cam, now)
-    this.drawSelection()
+    this.drawSelection(now)
     this.emitFocus(settled, band)
     this.lastFrameMs = performance.now() - now
     if (window.chaosPerf) this.drawPerf()
     // keep frames coming only while something is alive; otherwise the loop sleeps
-    if (camMoving || !settled || ripplesActive || this.bubble.needsFrame(now) || this.pendingBubble) {
+    if (
+      camMoving ||
+      !settled ||
+      ripplesActive ||
+      this.bubble.needsFrame(now) ||
+      this.pendingBubble ||
+      this.travelAnim
+    ) {
       this.wake()
     }
   }
@@ -505,29 +622,56 @@ export class ChaosEngine {
     ctx.globalAlpha = 1
     paintModuleBorders(ctx, world, v, 1 / cam.z)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    paintLabels(ctx, world, view, v, cam, this.scratch)
+    paintLabels(ctx, world, view, v, cam, this.scratch, false)
     ctx.restore()
   }
 
-  private drawSelection(): void {
+  /** Selection bubble: double-stroke rounded outline. During travel the rect
+   *  tweens from the previous function on the camera flight's clock. */
+  private drawSelection(now: number): void {
     const { world } = this
-    const id = this.opts.selectedId
-    if (!world || !id) return
-    const ix = world.byId.get(id)
-    if (ix == null) return
-    const n = world.fns[ix]
+    if (!world) return
+    let rx: number
+    let ry: number
+    let rw: number
+    let rh: number
+    const ta = this.travelAnim
+    if (ta) {
+      const t = clamp((now - ta.t0) / ta.dur, 0, 1)
+      const e = easeInOutCubic(t)
+      rx = ta.from.x + (ta.to.x - ta.from.x) * e
+      ry = ta.from.y + (ta.to.y - ta.from.y) * e
+      rw = ta.from.w + (ta.to.w - ta.from.w) * e
+      rh = ta.from.h + (ta.to.h - ta.from.h) * e
+      if (t >= 1) this.travelAnim = null
+    } else {
+      const id = this.opts.selectedId
+      if (!id) return
+      const ix = world.byId.get(id)
+      if (ix == null) return
+      const n = world.fns[ix]
+      rx = n.x
+      ry = n.y
+      rw = n.w
+      rh = n.h
+    }
     const { ctx, cam } = this
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    const p = cam.worldToScreen(n.x, n.y)
-    const mw = Math.max(n.w * cam.z, 5)
-    const mh = Math.max(n.h * cam.z, 5)
+    const p = cam.worldToScreen(rx, ry)
+    const mw = Math.max(rw * cam.z, 5)
+    const mh = Math.max(rh * cam.z, 5)
+    const rad = Math.max(2, Math.min(9, mw / 4, mh / 4))
     ctx.lineJoin = 'round'
     ctx.strokeStyle = 'rgba(255,255,255,0.95)'
     ctx.lineWidth = 4
-    ctx.strokeRect(p.x - 1, p.y - 1, mw + 2, mh + 2)
+    ctx.beginPath()
+    ctx.roundRect(p.x - 1, p.y - 1, mw + 2, mh + 2, rad)
+    ctx.stroke()
     ctx.strokeStyle = getTheme(this.opts.themeId).colors.selection
     ctx.lineWidth = 2
-    ctx.strokeRect(p.x - 1, p.y - 1, mw + 2, mh + 2)
+    ctx.beginPath()
+    ctx.roundRect(p.x - 1, p.y - 1, mw + 2, mh + 2, rad)
+    ctx.stroke()
   }
 
   private drawPerf(): void {
