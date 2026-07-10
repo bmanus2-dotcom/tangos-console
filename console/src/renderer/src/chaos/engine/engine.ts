@@ -7,7 +7,6 @@ import { clamp, easeInOutCubic } from './anim'
 import { NameBubble } from './bubbles'
 import { Camera } from './camera'
 import { LodState } from './lod'
-import { RippleField, rippleBounds, rippleLift } from './ripple'
 import {
   fnColor,
   isDimmed,
@@ -90,7 +89,6 @@ export class ChaosEngine {
   private readonly cam = new Camera()
   private readonly lod = new LodState()
   private readonly scratch: number[] = []
-  private readonly ripples = new RippleField()
   private readonly bubble = new NameBubble()
   private readonly pointer = { x: 0, y: 0, lastT: 0, inside: false }
   private db: AtlasDb | null = null
@@ -120,6 +118,10 @@ export class ChaosEngine {
   private miniBase: HTMLCanvasElement | null = null
   private miniKey = ''
   private miniRect: Rect | null = null
+  /** Hover lift: the one block under the cursor rises; previous ones ease down. */
+  private hoverIx = -1
+  private hoverK = 0
+  private falling: Array<{ ix: number; k: number }> = []
 
   constructor(canvas: HTMLCanvasElement, cb: EngineCallbacks) {
     this.canvas = canvas
@@ -218,16 +220,10 @@ export class ChaosEngine {
     if (mod) this.cb.onModule(this.opts.moduleFilter === mod.module ? null : mod.module)
   }
 
-  /** Pointer position in canvas CSS coordinates. Feeds ripples and hover intent. */
+  /** Pointer position in canvas CSS coordinates. Feeds the hover lift + bubbles. */
   pointerMove(cssX: number, cssY: number): void {
     const now = performance.now()
     const pt = this.pointer
-    if (pt.inside && this.lod.band === 1 && this.cam.settled(now)) {
-      const dt = Math.max(1, now - pt.lastT)
-      const speed = (Math.hypot(cssX - pt.x, cssY - pt.y) / dt) * 1000
-      const w = this.cam.screenToWorld(cssX, cssY)
-      this.ripples.emit(w.x, w.y, speed, now)
-    }
     if (Math.hypot(cssX - this.restX, cssY - this.restY) > 4) {
       this.restX = cssX
       this.restY = cssY
@@ -269,7 +265,6 @@ export class ChaosEngine {
     this.flightTarget = null
     this.cam.panBy(dxCss, dyCss, now)
     this.bubble.hide(now)
-    this.ripples.clear()
     this.wake()
   }
 
@@ -574,12 +569,12 @@ export class ChaosEngine {
     const band = this.lod.update(this.cam.z)
     const settled = this.cam.settled(now)
     if (settled && (this.needBake || !this.bakeMatches())) this.bake()
-    const ripplesActive = this.ripples.step(now)
+    const liftsAnimating = this.updateLift(dt, settled)
     this.updateHover(now, settled)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     this.blitBase()
-    if (ripplesActive && band === 1 && settled) this.drawRipples(now)
+    if (settled) this.drawLifts()
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     this.bubble.draw(ctx, this.cam, now)
     this.drawSelection(now)
@@ -591,7 +586,7 @@ export class ChaosEngine {
     if (
       camMoving ||
       !settled ||
-      ripplesActive ||
+      liftsAnimating ||
       this.bubble.needsFrame(now) ||
       this.pendingBubble ||
       this.travelAnim
@@ -726,18 +721,77 @@ export class ChaosEngine {
     }
   }
 
-  /** Repaint the ripple-affected region from data: clear, tiles with lift, module
-   *  chrome - all clipped, so it composes seamlessly against the baked base. */
-  private drawRipples(now: number): void {
+  /** Advance the hover lift: the block under the cursor rises (~120ms), anything
+   *  previously raised eases back down. Returns true while any lift animates. */
+  private updateLift(dt: number, settled: boolean): boolean {
+    if (!this.world || !settled) {
+      this.hoverIx = -1
+      this.hoverK = 0
+      this.falling.length = 0
+      return false
+    }
+    let ix = -1
+    const mini = this.miniRect
+    const overMini =
+      !!mini &&
+      this.pointer.x >= mini.x &&
+      this.pointer.x <= mini.x + mini.w &&
+      this.pointer.y >= mini.y &&
+      this.pointer.y <= mini.y + mini.h
+    if (this.pointer.inside && !overMini) {
+      const p = this.cam.screenToWorld(this.pointer.x, this.pointer.y)
+      const fn = this.world.hitFn(p.x, p.y)
+      if (fn) ix = this.world.byId.get(fn.f.id) ?? -1
+    }
+    if (ix !== this.hoverIx) {
+      if (this.hoverIx !== -1 && this.hoverK > 0) this.falling.push({ ix: this.hoverIx, k: this.hoverK })
+      this.hoverIx = ix
+      this.hoverK = 0
+      const resumeAt = this.falling.findIndex((f) => f.ix === ix)
+      if (resumeAt >= 0) {
+        this.hoverK = this.falling[resumeAt].k
+        this.falling.splice(resumeAt, 1)
+      }
+    }
+    if (this.hoverIx !== -1) this.hoverK = Math.min(1, this.hoverK + dt / 0.12)
+    let anyFalling = false
+    for (const f of this.falling) {
+      f.k -= dt / 0.15
+      if (f.k > 0) anyFalling = true
+    }
+    if (this.falling.length && !anyFalling) this.falling.length = 0
+    else this.falling = this.falling.filter((f) => f.k > 0)
+    return (this.hoverIx !== -1 && this.hoverK < 1) || this.falling.length > 0
+  }
+
+  /** Region-repaint the raised block(s): clear, ground, flat neighbors, then the
+   *  lifted tiles with shadow/offset/highlight, chrome on top - all clipped, so
+   *  it composes seamlessly against the baked base. */
+  private drawLifts(): void {
     const { world, cam, ctx, dpr } = this
     if (!world) return
-    const snaps = this.ripples.snapshot(cam, now)
-    if (!snaps.length) return
-    const b = rippleBounds(snaps)
-    const bx = Math.max(0, b.x)
-    const by = Math.max(0, b.y)
-    const bw = Math.min(this.cssW, b.x + b.w) - bx
-    const bh = Math.min(this.cssH, b.y + b.h) - by
+    const lifts = new Map<number, number>()
+    if (this.hoverIx !== -1 && this.hoverK > 0) lifts.set(this.hoverIx, this.hoverK)
+    for (const f of this.falling) if (!lifts.has(f.ix)) lifts.set(f.ix, f.k)
+    if (!lifts.size) return
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const ix of lifts.keys()) {
+      const n = world.fns[ix]
+      const a = cam.worldToScreen(n.x, n.y)
+      const b = cam.worldToScreen(n.x + n.w, n.y + n.h)
+      x0 = Math.min(x0, a.x)
+      y0 = Math.min(y0, a.y)
+      x1 = Math.max(x1, b.x)
+      y1 = Math.max(y1, b.y)
+    }
+    const M = 12
+    const bx = Math.max(0, x0 - M)
+    const by = Math.max(0, y0 - M)
+    const bw = Math.min(this.cssW, x1 + M) - bx
+    const bh = Math.min(this.cssH, y1 + M) - by
     if (bw <= 0 || bh <= 0) return
     const v = this.paintView()
     ctx.save()
@@ -746,13 +800,14 @@ export class ChaosEngine {
     ctx.rect(bx, by, bw, bh)
     ctx.clip()
     ctx.clearRect(bx, by, bw, bh)
+    const zy = cam.z * cam.sy
     ctx.setTransform(
       dpr * cam.z,
       0,
       0,
-      dpr * cam.z,
+      dpr * zy,
       dpr * (cam.vw / 2 - cam.x * cam.z),
-      dpr * (cam.vh / 2 - cam.y * cam.z)
+      dpr * (cam.vh / 2 - cam.y * zy)
     )
     const tl = cam.screenToWorld(bx, by)
     const br = cam.screenToWorld(bx + bw, by + bh)
@@ -767,29 +822,33 @@ export class ChaosEngine {
       ctx.fillRect(gx, gy, gw, gh)
     }
     const shave = 0.5 / cam.z
-    const halfW = cam.vw / 2
-    const halfH = cam.vh / 2
-    for (const i of world.query(view, this.scratch)) {
+    const idx = world.query(view, this.scratch)
+    for (const i of idx) {
+      if (lifts.has(i)) continue
       const n = world.fns[i]
-      const sx = (n.x + n.w / 2 - cam.x) * cam.z + halfW
-      const sy = (n.y + n.h / 2 - cam.y) * cam.z + halfH
-      const lift = rippleLift(snaps, sx, sy)
+      ctx.globalAlpha = isDimmed(n.f, v) ? 0.14 : 1
+      ctx.fillStyle = fnColor(n.f, v)
+      ctx.fillRect(n.x, n.y, Math.max(shave, n.w - shave), Math.max(shave, n.h - shave))
+    }
+    for (const [i, k] of lifts) {
+      const n = world.fns[i]
+      const wpx = n.w * cam.z
+      const hpx = n.h * zy
+      const s = 1 + Math.min(0.05, 8 / Math.max(20, wpx, hpx)) * k
+      const x = n.x + (n.w * (1 - s)) / 2
+      const yBase = n.y + (n.h * (1 - s)) / 2
+      const w2 = Math.max(shave, n.w * s - shave)
+      const h2 = Math.max(shave, n.h * s - shave)
       const dimA = isDimmed(n.f, v) ? 0.14 : 1
+      ctx.globalAlpha = 0.18 * k * dimA
+      ctx.fillStyle = '#000000'
+      ctx.fillRect(x, yBase + (2 * k) / zy, w2, h2)
       ctx.globalAlpha = dimA
       ctx.fillStyle = fnColor(n.f, v)
-      if (lift < 0.004) {
-        ctx.fillRect(n.x, n.y, Math.max(shave, n.w - shave), Math.max(shave, n.h - shave))
-      } else {
-        const s = 1 + 0.05 * lift
-        const x = n.x + (n.w * (1 - s)) / 2
-        const y = n.y + (n.h * (1 - s)) / 2 - (3 * lift) / cam.z
-        const w2 = Math.max(shave, n.w * s - shave)
-        const h2 = Math.max(shave, n.h * s - shave)
-        ctx.fillRect(x, y, w2, h2)
-        ctx.globalAlpha = dimA * 0.1 * lift
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(x, y, w2, h2)
-      }
+      ctx.fillRect(x, yBase - (3 * k) / zy, w2, h2)
+      ctx.globalAlpha = dimA * 0.12 * k
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(x, yBase - (3 * k) / zy, w2, h2)
     }
     ctx.globalAlpha = 1
     paintModuleBorders(ctx, world, v, 1 / cam.z)
