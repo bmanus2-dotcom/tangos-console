@@ -259,6 +259,8 @@ export default function AtlasView({
         )}
       </div>
 
+      <div className="atlas-body">
+      <div className="atlas-left">
       <ChaosViewer
         db={db}
         moduleFilter={moduleFilter}
@@ -305,7 +307,9 @@ export default function AtlasView({
           </button>
         )}
       </div>
+      </div>
 
+      <div className="atlas-right">
       {selectedFn && (
         <div className="atlas-detail aero-panel">
           <span className="ad-name mono">{selectedFn.name}</span>
@@ -402,6 +406,8 @@ export default function AtlasView({
             </div>
           )
         })}
+      </div>
+      </div>
       </div>
     </div>
   )

@@ -549,6 +549,12 @@ html, body, #root { background: transparent !important; }
 .bar { height: 12px; border-radius: 999px; background: rgba(0,0,0,0.08); overflow: hidden; border: 1px solid var(--aero-border); }
 .bar .fill { height: 100%; background: linear-gradient(90deg, rgb(var(--aero-matched-rgb)), rgb(var(--aero-accent-rgb))); }
 .atlas-treemap { padding: 8px; }
+/* Atlas two-column layout: viewer takes the left 2/3 at full height, the
+   detail/search/list stack rides the right 1/3. */
+.atlas-body { display: flex; flex: 1 1 0; gap: 12px; min-height: 0; }
+.atlas-left { flex: 2 1 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.atlas-right { flex: 1 1 0; display: flex; flex-direction: column; gap: 12px; min-width: 300px; }
+.atlas-right .atlas-detail { flex-wrap: wrap; row-gap: 8px; }
 .treemap-legend { display: flex; gap: 16px; align-items: center; font-size: 11.5px; color: var(--aero-muted); padding: 0 6px; margin-top: -4px; }
 .treemap-legend span { display: inline-flex; align-items: center; }
 .treemap-legend .lg { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15); }
