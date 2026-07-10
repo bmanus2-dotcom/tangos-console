@@ -184,23 +184,39 @@ export class ChaosEngine {
   }
 
   /** Click in canvas CSS coordinates. Band 1: fly into the module. Band 2+:
-   *  select the function (same upward semantics as the classic Treemap). */
+   *  the click IS the dive - select the function and fly to fit it (re-clicking
+   *  the selected one never toggle-deselects; Esc/detail-X handle that). */
   click(cssX: number, cssY: number): void {
     if (!this.world) return
+    const now = performance.now()
     const p = this.cam.screenToWorld(cssX, cssY)
     if (this.lod.band === 1) {
       const mod = this.world.hitMod(p.x, p.y)
       if (mod) {
         this.lastEmittedModule = mod.module
         this.cb.onModule(mod.module)
-        this.cam.flyToRect(mod, 0.06, performance.now())
+        this.cam.flyToRect(mod, 0.06, now)
         this.wake()
       }
       return
     }
     const fn = this.world.hitFn(p.x, p.y)
     if (fn) {
-      this.cb.onFunction(fn.f)
+      const prevIx = this.opts.selectedId != null ? this.world.byId.get(this.opts.selectedId) : undefined
+      if (fn.f.id !== this.opts.selectedId) {
+        this.lastEmittedModule = fn.f.module // pre-acknowledge the moduleFilter echo
+        this.cb.onFunction(fn.f)
+      }
+      this.sources.request(fn.f)
+      const dur = this.cam.flyToRect(fn, 0.35, now)
+      const from = prevIx != null ? this.world.fns[prevIx] : fn
+      this.travelAnim = {
+        from: { x: from.x, y: from.y, w: from.w, h: from.h },
+        to: { x: fn.x, y: fn.y, w: fn.w, h: fn.h },
+        t0: now,
+        dur
+      }
+      this.wake()
       return
     }
     const mod = this.world.hitMod(p.x, p.y)
@@ -253,7 +269,7 @@ export class ChaosEngine {
   key(k: string): boolean {
     if (k === 'Escape') return this.escapeOut()
     const dir = TRAVEL_KEYS[k.toLowerCase()]
-    if (dir && this.lod.band === 3) return this.travel(dir[0], dir[1])
+    if (dir && this.lod.band >= 2) return this.travel(dir[0], dir[1])
     return false
   }
 
@@ -327,7 +343,7 @@ export class ChaosEngine {
       this.cb.onFunction(target.f)
     }
     this.sources.request(target.f)
-    const dur = this.cam.flyToRect(target, 0.45, now)
+    const dur = this.cam.flyToRect(target, 0.35, now)
     this.travelAnim = {
       from: { x: cur.x, y: cur.y, w: cur.w, h: cur.h },
       to: { x: target.x, y: target.y, w: target.w, h: target.h },
@@ -508,19 +524,22 @@ export class ChaosEngine {
 
   private rebuild(): void {
     if (!this.db || this.cssW <= 0 || this.cssH <= 0) return
-    const prevBand = this.lod.band
-    const anchorModule = this.opts.moduleFilter
-    const anchorFn = this.opts.selectedId
+    const prev = this.world
+    // capture BEFORE setWorld: relative center + zoom-above-fit. Panel reflows
+    // (detail bar / toolbar chip appearing) and data refreshes must never yank
+    // the camera - restore exactly where the user was, just re-projected.
+    const relX = prev ? this.cam.x / prev.w : 0.5
+    const relY = prev ? this.cam.y / prev.h : 0.5
+    const relZ = prev ? this.cam.z / this.cam.fitZ : 1
     this.world = buildWorld(this.db, this.cssW, this.cssH)
     this.lod.compute(this.world, this.cssW, this.cssH)
     this.cam.setWorld(this.world.w, this.world.h, this.lod.zMax())
-    const fnIx = anchorFn != null ? this.world.byId.get(anchorFn) : undefined
-    if (prevBand === 3 && fnIx != null) {
-      this.cam.jumpToRect(this.world.fns[fnIx], 0.35)
-    } else if (prevBand >= 2 && anchorModule) {
-      const mod = this.world.mods.find((m) => m.module === anchorModule)
-      if (mod) this.cam.jumpToRect(mod, 0.06)
-      else this.cam.fitWorld()
+    if (this.board) {
+      this.boardCell = Math.sqrt(Math.max(4, this.world.medianFnArea)) / 4
+      this.cam.setZoomOverride(16 / this.boardCell, 64 / this.boardCell)
+    }
+    if (prev) {
+      this.cam.jumpTo(relX * this.world.w, relY * this.world.h, relZ * this.cam.fitZ)
     } else {
       this.cam.fitWorld()
     }
