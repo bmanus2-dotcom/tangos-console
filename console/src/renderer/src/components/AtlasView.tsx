@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Search, Plus, Minus, X, Database, Cloud, HardDrive, Users, ExternalLink } from 'lucide-react'
 import type { AtlasDb, AtlasFunction, BatchItem, GithubCredits } from '../../../shared/types'
-import Treemap from './Treemap'
+import ChaosViewer from '../chaos/ChaosViewer'
 import { sortFns, SORT_LABELS, type SortKey } from '../atlas/sort'
 
 const pct = (n: number, d: number): string => (d ? `${((n / d) * 100).toFixed(1)}%` : '0%')
@@ -239,7 +239,7 @@ export default function AtlasView({
         )}
       </div>
 
-      <Treemap
+      <ChaosViewer
         db={db}
         moduleFilter={moduleFilter}
         onModule={setModuleFilter}
@@ -258,7 +258,6 @@ export default function AtlasView({
         authorResolve={keyToLogin}
         authorFilter={authorFilter}
         showNearMiss={showNearMiss}
-        fill
       />
 
       <div className="treemap-legend">
