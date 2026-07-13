@@ -1157,6 +1157,11 @@ function genPlanFor(role: string | undefined, count: number): { schedId: string;
       // shipping full disasm/callees/pool context so the agent can match straight from the asm.
       // NOTE: worklist streams JSONL to stdout (no `out` arg) - genDraft reads that channel below.
       return { schedId: 'worklist', values: { easy: true, limit: count } }
+    case 'Random':
+      // Pull ANY unmatched function at random - any size, no similarity/easy bias. worklist --random
+      // reshuffles every run, so an infinite loop re-rolls a fresh set each batch (see genDraft's loop
+      // re-assign). Streams JSONL to stdout like the Finisher's worklist (no `out` arg).
+      return { schedId: 'worklist', values: { random: true, limit: count } }
     default:
       return { schedId: 'coddog', values: { limit: count } }
   }

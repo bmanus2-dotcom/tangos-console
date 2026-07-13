@@ -198,6 +198,8 @@ export const ROLE_PRESETS: Record<string, string> = {
     'You are the MAIN MATCHER. Schedule with coddog/worklist, write C, verify with match/fdiff, and bank confirmed byte matches. Favor breadth and steady throughput.',
   'Finisher':
     'You are the FINISHER. coddog has run dry - the easy similarity-anchored work is done and it will only hand out one target at a time. Your batch comes straight from worklist: unmatched functions with no matched sibling to lean on. Match each one from the disasm, callees, pool slots, and signatures in its record, verify with match/fdiff, and bank confirmed byte matches. This is the endgame tail; work it patiently.',
+  'Random':
+    'You are the RANDOM MATCHER. Your batch is unmatched functions drawn uniformly at random from across the whole ROM - any size, any module, no similarity hint. For each target, study the disasm, callees, pool slots, and signatures in its record, write C, and verify with match/fdiff. Give each function about 5 attempts with DIFFERENT levers; if it has not matched by then, move on to the next rather than grinding one function. Bank confirmed byte matches. This role samples the whole unmatched pool for breadth - on an infinite loop you get a fresh random draw each batch.',
   'Long sweep':
     'You are the LONG SWEEP. Take on the large/hard functions others skip. Run the sweep/clone/paramclone tiers and grind near-misses patiently with the refine tools.',
   'Draft checker':
