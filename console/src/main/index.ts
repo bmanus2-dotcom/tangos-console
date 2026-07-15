@@ -1203,38 +1203,35 @@ ipcMain.handle('atlas:generate', async () => {
 })
 
 // A role shapes BOTH what the scheduler picks and the default batch size:
-//  - Long sweep      -> large functions, fewer per batch
-//  - Explorer        -> spread across modules/address space, more per batch
-//  - Draft checker   -> the near-miss refine pile
-//  - Main matcher/etc-> plain similarity scheduler
+//  - Hard matcher -> large functions (min-size floor), fewer per batch
+//  - Drafter      -> similarity-anchored unmatched functions (stage 1: produce drafts)
+//  - Refiner      -> the near-miss refine pile (stage 2: drafts -> matches)
+//  - Random       -> any unmatched function, uniformly at random
+//  - default/none -> plain similarity scheduler (same pool as Drafter)
 function genPlanFor(role: string | undefined, count: number): { schedId: string; values: Record<string, unknown> } {
   switch (role) {
-    case 'Long sweep':
+    case 'Hard matcher':
+      // The big/hard functions - min-size floor so coddog only surfaces meaty targets.
       return { schedId: 'coddog', values: { limit: count, min: '0x200' } }
-    case 'Explorer':
-      return { schedId: 'coddog', values: { limit: count, spread: true } }
-    case 'Draft checker':
-      // include_attempted so a driven refiner keeps working the near-miss pool instead of drying
-      // up to ~1 target once refine_wl's ledger has seen everything close.
+    case 'Drafter':
+      // Stage 1: unmatched functions with a similar matched sibling to adapt into a draft. Plain
+      // coddog (similarity-anchored) - same pool as the default, framed as draft production.
+      return { schedId: 'coddog', values: { limit: count } }
+    case 'Refiner':
+      // Stage 2: near-misses that already carry a draft. include_attempted so a driven refiner keeps
+      // working the pool instead of drying up to ~1 target once refine_wl's ledger has seen it all.
       return { schedId: 'refine_wl', values: { limit: count, include_attempted: true } }
-    case 'Finisher':
-      // coddog dries up to ~1 target once the similarity-anchored pool is worked through. worklist
-      // pulls the remaining unmatched tail regardless of siblings (easiest-first for hit rate),
-      // shipping full disasm/callees/pool context so the agent can match straight from the asm.
-      // NOTE: worklist streams JSONL to stdout (no `out` arg) - genDraft reads that channel below.
-      return { schedId: 'worklist', values: { easy: true, limit: count } }
     case 'Random':
       // Pull ANY unmatched function at random - any size, no similarity/easy bias. worklist --random
       // reshuffles every run, so an infinite loop re-rolls a fresh set each batch (see genDraft's loop
-      // re-assign). Streams JSONL to stdout like the Finisher's worklist (no `out` arg).
+      // re-assign). Streams JSONL to stdout (no `out` arg) - genDraft reads that channel below.
       return { schedId: 'worklist', values: { random: true, limit: count } }
     default:
       return { schedId: 'coddog', values: { limit: count } }
   }
 }
-/** Sensible default batch size per role (Long sweep is heavy -> fewer; Explorer -> more). */
-export const roleBatchSize = (role?: string): number =>
-  role === 'Long sweep' ? 8 : role === 'Explorer' ? 24 : 16
+/** Sensible default batch size per role (Hard matcher is heavy -> fewer targets per batch). */
+export const roleBatchSize = (role?: string): number => (role === 'Hard matcher' ? 8 : 16)
 
 // Generate a batch scheduled for this AI's role (similarity, large-function sweep, spread
 // survey, or near-miss refine). Each target carries scaffolding metadata for the agent.
@@ -1274,7 +1271,7 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     )
   if (!sched) throw new Error('this repo has no similarity scheduler (coddog) in tangos.json')
   // Most schedulers (coddog/refine_wl) write their worklist JSONL to a temp `out` file; some
-  // (worklist, for the Finisher role) stream it to stdout and take no `out` arg. Detect which so
+  // (worklist, for the Random role) stream it to stdout and take no `out` arg. Detect which so
   // we read the right channel and never hand a tool an `out` flag it would reject.
   const schedWritesFile = sched.args?.some((a) => a.name === 'out') ?? false
 
@@ -1352,7 +1349,7 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     if (/nothing to (refine|match|do)|chose 0\b|0 refine-routable|no (routable|refinable|eligible|matchable)/i.test(out)) {
       const why =
         sched.id === 'refine_wl'
-          ? 'No near-misses are close enough to refine right now - the pool has candidates but none pass the current divergence threshold. Switch this AI to the "Main matcher" role for fresh functions, or come back once more near-misses land.'
+          ? 'No near-misses are close enough to refine right now - the pool has candidates but none pass the current divergence threshold. Switch this AI to the "Drafter" role for fresh functions, or come back once more near-misses land.'
           : 'The scheduler found no eligible targets for this role right now. Try a different role, size, or module.'
       throw new Error(`No work for the "${role ?? 'selected'}" role right now.\n\n${why}\n\n--- scheduler output ---\n${tail}`)
     }
@@ -1784,7 +1781,7 @@ async function driveBatch(agentName: string): Promise<void> {
   const freshSkipped = enriched.length - rows.length
   if (!rows.length)
     throw new Error(
-      `${agentName}'s batch is all fresh targets with no draft to refine. The console drives API models with glm_refine, which improves an existing draft - it can't matcher-from-scratch here. Give this AI the Refine role (near-miss targets carry a draft), or hand these from-scratch functions to an MCP agent.`
+      `${agentName}'s batch is all fresh targets with no draft to refine. The console drives API models with glm_refine, which improves an existing draft - it can't match from scratch here. Give this AI the "Refiner" role (near-miss targets carry a draft), or hand these from-scratch functions to an MCP agent.`
     )
   if (freshSkipped)
     console.log(`[driveBatch] ${agentName}: skipped ${freshSkipped} fresh target(s) with no draft to refine`)
@@ -2454,9 +2451,27 @@ ipcMain.handle('bug:submit', async (_e, payload: { description: string; screensh
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null) // no native File/Edit/View menu - we use our own chrome
   const saved = loadSettings()
-  // migrate legacy single-role (string) entries to the multi-role (string[]) format
+  // migrate legacy single-role (string) entries to the multi-role (string[]) format, AND map the
+  // old 7-role names onto the pruned 4-role set so a stored assignment never points at a dead role.
+  const ROLE_MIGRATE: Record<string, string> = {
+    'Main matcher': 'Drafter',
+    'Explorer': 'Drafter',
+    'Long sweep': 'Hard matcher',
+    'Draft checker': 'Refiner',
+    'Finisher': 'Random',
+    'Verifier': '' // dropped - no equivalent, so it clears
+  }
   agentRoles = Object.fromEntries(
-    Object.entries(saved.agentRoles ?? {}).map(([k, v]) => [k, (Array.isArray(v) ? v : [v]).filter((r) => r && r !== 'Unassigned')])
+    Object.entries(saved.agentRoles ?? {}).map(([k, v]) => [
+      k,
+      [
+        ...new Set(
+          (Array.isArray(v) ? v : [v])
+            .map((r) => (r in ROLE_MIGRATE ? ROLE_MIGRATE[r] : r))
+            .filter((r) => r && r !== 'Unassigned')
+        )
+      ]
+    ])
   )
   agentEfforts = { ...(saved.agentEfforts ?? {}) }
   aiStats.hydrate(saved.agentStats)

@@ -192,22 +192,27 @@ export interface ConnectedClient {
   emptyPolls?: number // consecutive empty next_batch polls, for the idle stop signal
 }
 
-/** Built-in agent roles, each with standing instructions injected into next_batch. */
+/** Built-in agent roles, each with standing instructions injected into next_batch. A two-stage
+ *  matching pipeline (Drafter -> Refiner) plus a hard-function role and a random-breadth one. */
 export const ROLE_PRESETS: Record<string, string> = {
-  'Main matcher':
-    'You are the MAIN MATCHER. Schedule with coddog/worklist, write C, verify with match/fdiff, and bank confirmed byte matches. Favor breadth and steady throughput.',
-  'Finisher':
-    'You are the FINISHER. coddog has run dry - the easy similarity-anchored work is done and it will only hand out one target at a time. Your batch comes straight from worklist: unmatched functions with no matched sibling to lean on. Match each one from the disasm, callees, pool slots, and signatures in its record, verify with match/fdiff, and bank confirmed byte matches. This is the endgame tail; work it patiently.',
+  'Hard matcher':
+    'You are the HARD MATCHER. Take the large, hard functions others skip and drive each all the way to a byte match, end to end. Write C from the disasm, callees, pool slots, and signatures; run the heavy tiers (sweep/clone/paramclone) and the refine tools; verify with match/fdiff; bank confirmed byte matches. This is the deep-water role - work each one patiently.',
+  'Drafter':
+    'You are the DRAFTER (stage 1 of the pipeline). Your batch is unmatched functions that have a similar MATCHED sibling to lean on. Adapt that sibling into a close, COMPILING draft for each target - get it as near as you can. You do NOT have to land byte-exact: bank each near-miss draft to the draft DB (tools/nearmiss_db.py) so the Refiner can finish it. Favor volume of good drafts over grinding any single function.',
+  'Refiner':
+    'You are the REFINER (stage 2 of the pipeline). Pull near-misses that already carry a draft, diagnose the exact divergences with fdiff/falign, and refine each draft to a byte-exact match. You have the most to work with - a compiling draft plus the verifier diff - so nudge codegen SHAPE (declaration/statement order, types, register coloring) rather than rewriting. Bank confirmed byte matches.',
   'Random':
-    'You are the RANDOM MATCHER. Your batch is unmatched functions drawn uniformly at random from across the whole ROM - any size, any module, no similarity hint. For each target, study the disasm, callees, pool slots, and signatures in its record, write C, and verify with match/fdiff. Give each function about 5 attempts with DIFFERENT levers; if it has not matched by then, move on to the next rather than grinding one function. Bank confirmed byte matches. This role samples the whole unmatched pool for breadth - on an infinite loop you get a fresh random draw each batch.',
-  'Long sweep':
-    'You are the LONG SWEEP. Take on the large/hard functions others skip. Run the sweep/clone/paramclone tiers and grind near-misses patiently with the refine tools.',
-  'Draft checker':
-    'You are the DRAFT CHECKER. Pull near-misses, diagnose the exact divergences with diffcand/falign, and produce closer compiling drafts for the matchers to finish.',
-  'Verifier':
-    'You are the VERIFIER. Run linkcheck and reloc_audit over recently banked matches and flag anything WRONG/BLIND. Do not bank; only verify and report.',
-  'Explorer':
-    'You are the EXPLORER. Survey unmatched functions with triage/cluster/recurring/coloring and surface high-value targets and idioms worth templatizing.'
+    'You are the RANDOM MATCHER. Your batch is unmatched functions drawn uniformly at random from across the whole ROM - any size, any module, no similarity hint. For each, study the disasm, callees, pool slots, and signatures, write C, and verify with match/fdiff. Give each about 5 attempts with DIFFERENT levers; if it has not matched by then, move on rather than grinding. Bank confirmed byte matches. This role samples the whole unmatched pool for breadth - on an infinite loop you get a fresh random draw each batch.'
+}
+/** Rough model-strength each role wants, shown in the assign-role dropdown so the operator parks the
+ *  right model: your strongest on the hardest role, a cheap/local model where there's the most
+ *  scaffolding. Each tier names a reference model so "low/high" reads as reasoning/skill, not a guess.
+ *  Display-only - never injected into the agent's instructions; edit the reference models freely. */
+export const ROLE_STRENGTH: Record<string, string> = {
+  'Hard matcher': 'very high, Fable 5+',
+  'Random': 'high, Sonnet 5 / Grok',
+  'Drafter': 'medium, DeepSeek',
+  'Refiner': 'low, GLM / Nemotron'
 }
 export const ROLE_NAMES = ['Unassigned', ...Object.keys(ROLE_PRESETS)]
 

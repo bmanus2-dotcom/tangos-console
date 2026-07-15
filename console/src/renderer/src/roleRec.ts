@@ -17,10 +17,10 @@ export function recommendRole(a: AiAgent): RoleRec {
   if (by && s.matchAttempts >= 4) {
     const rBig = rate(by['>0x800'])
     const rSmall = rate(by['<=0x40'])
-    if (rBig != null && rBig >= 0.4) return { role: 'Long sweep', why: 'lands large functions others skip' }
-    if (rSmall != null && rSmall >= 0.6) return { role: 'Main matcher', why: 'high hit rate on everyday functions' }
-    if (s.hitRate < 0.25) return { role: 'Explorer', why: 'surfaces targets but rarely lands directly' }
-    if (s.hitRate >= 0.5) return { role: 'Main matcher', why: 'steady, reliable throughput' }
+    if (rBig != null && rBig >= 0.4) return { role: 'Hard matcher', why: 'lands large functions others skip' }
+    if (rSmall != null && rSmall >= 0.6) return { role: 'Refiner', why: 'high hit rate - good at closing functions out' }
+    if (s.hitRate < 0.25) return { role: 'Drafter', why: 'gets functions close; let the Refiner finish them' }
+    if (s.hitRate >= 0.5) return { role: 'Refiner', why: 'steady, reliable at landing matches' }
   }
   return { role: null, why: 'still learning - assign it work to find its strengths' }
 }
