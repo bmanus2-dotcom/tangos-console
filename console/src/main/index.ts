@@ -1765,11 +1765,29 @@ async function driveBatch(agentName: string): Promise<void> {
     await Promise.all(workers)
     if (couldNotEnrich) console.log(`[driveBatch] ${agentName}: ${couldNotEnrich}/${batch.items.length} target(s) had no enrichable context and were skipped`)
   }
-  const rows = batch.items.map((i) => enrichedRows.get(i.ref)).filter((r): r is string => !!r)
-  if (!rows.length)
+  const enriched = batch.items.map((i) => enrichedRows.get(i.ref)).filter((r): r is string => !!r)
+  if (!enriched.length)
     throw new Error(
       `none of this batch's ${batch.items.length} target(s) could be enriched with context - pick targets with an addr + module the worklist tool knows, or generate the batch with the Recommended button (coddog)`
     )
+  // glm_refine REFINES an existing draft. A fresh target (no "draft" field - a coddog/finisher or
+  // hand-picked pick) has nothing to refine, so the model just flails or reaches for an inline-asm
+  // hack (the "the draft is missing" failure). Keep only draftable rows; if none, steer the operator
+  // to a near-miss/refine batch rather than burning the model on hopeless from-scratch attempts.
+  const rows = enriched.filter((line) => {
+    try {
+      return !!(JSON.parse(line) as { draft?: string }).draft?.trim()
+    } catch {
+      return false
+    }
+  })
+  const freshSkipped = enriched.length - rows.length
+  if (!rows.length)
+    throw new Error(
+      `${agentName}'s batch is all fresh targets with no draft to refine. The console drives API models with glm_refine, which improves an existing draft - it can't matcher-from-scratch here. Give this AI the Refine role (near-miss targets carry a draft), or hand these from-scratch functions to an MCP agent.`
+    )
+  if (freshSkipped)
+    console.log(`[driveBatch] ${agentName}: skipped ${freshSkipped} fresh target(s) with no draft to refine`)
 
   // Stable, discoverable location (not a random temp name) so the run's "open folder" link
   // always resolves to real files. One worklist + output per agent; the next drive overwrites.
