@@ -431,31 +431,29 @@ function afterRun(
     // IMPROVES the function's best divergence so far (the gate lives inside recordNearMiss).
     aiStats.recordNearMiss(client?.name, func, matchDivergence(res.output), parseHexish(values.size))
   }
-  if (ok && typeof values.func === 'string') markItemDone(values.func)
+  // Any match attempt (hit or miss) marks the target WORKED so it leaves the "N in queue" count; a
+  // hit additionally marks it done for the % matched bar. A near-miss the agent moves on from still
+  // counts as worked - the queue reflects what is left to grind, not just what verified.
+  if (func) {
+    if (ok) markItemDone(func)
+    else markItemWorked(func)
+  }
   // A verified match means the agent wrote a matching source; when Writes + Review + Push are on,
   // attribute ONLY this matched function's src to the agent and roll it into its branch/PR (debounced
   // so a burst becomes one push). Gate on the specific func so ambient near-miss files aren't swept.
   if (ok && typeof values.func === 'string') void noteMatchAndPush(client?.name, [values.func])
 }
 
-/** Flag a target done across any batch that lists it (drives batch % complete). */
-function markItemDone(func: string): void {
-  let changed = false
-  for (const b of state.batches)
-    for (const it of b.items)
-      if (it.ref === func && !it.done) {
-        it.done = true
-        changed = true
-      }
-  if (!changed) return
-  pushState()
-  // Continuous mode (MCP agents): when a targeted batch is fully matched, queue the next.
+/** Continuous mode (looping agents): retire any targeted batch whose items are all worked THROUGH -
+ *  matched OR attempted-and-moved-on - and queue the next. Shared by markItemWorked/markItemDone so a
+ *  loop advances once the agent has ground through a batch, not only when every target byte-matched. */
+function advanceLoopingBatches(): void {
   for (const b of state.batches) {
     if (
       b.targetAgent &&
       b.status !== 'done' &&
       b.items.length &&
-      b.items.every((i) => i.done) &&
+      b.items.every((i) => i.done || i.worked) &&
       agentLoop.has(b.targetAgent)
     ) {
       b.status = 'done'
@@ -463,6 +461,37 @@ function markItemDone(func: string): void {
       void assignToAgent(b.targetAgent, role ?? 'Unassigned', roleBatchSize(role), true).catch(() => {})
     }
   }
+}
+
+/** Flag a target WORKED (an agent attempted it, hit or miss) across any batch that lists it. Drives
+ *  the "N in queue" count down as targets are ground through - distinct from `done` (verified match). */
+function markItemWorked(func: string): void {
+  let changed = false
+  for (const b of state.batches)
+    for (const it of b.items)
+      if (it.ref === func && !it.worked) {
+        it.worked = true
+        changed = true
+      }
+  if (!changed) return
+  pushState()
+  advanceLoopingBatches()
+}
+
+/** Flag a target done across any batch that lists it (drives batch % complete). A matched target
+ *  is also `worked`. */
+function markItemDone(func: string): void {
+  let changed = false
+  for (const b of state.batches)
+    for (const it of b.items)
+      if (it.ref === func && !it.done) {
+        it.done = true
+        it.worked = true
+        changed = true
+      }
+  if (!changed) return
+  pushState()
+  advanceLoopingBatches()
 }
 
 /** Pull the next queued batch addressed to this agent (or unaddressed): mark it active,
@@ -756,6 +785,9 @@ const apiDriving = new Set<string>()
  *  providers, and previously-seen names (whose boxes persist grayed-out). */
 function agentsSnapshot(): AiAgent[] {
   const byName = new Map<string, AiAgent>()
+  // Last MCP request time per agent name (any tool call OR next_batch poll), remembered across
+  // disconnect. Drives the presence dot's green -> yellow -> red decay in the controller.
+  const active = mcp.activityByName()
 
   // 1. live MCP clients, collapsed by name (a reconnecting agent is one box).
   const grouped = new Map<string, ConnectedClient[]>()
@@ -773,6 +805,7 @@ function agentsSnapshot(): AiAgent[] {
       connected: true,
       sessions: list.length,
       currentBatchId: aiStats.currentBatchId(name),
+      lastSeen: active.get(name),
       stats: aiStats.statsFor(name),
       run: aiStats.runStatsFor(name)
     })
@@ -801,7 +834,8 @@ function agentsSnapshot(): AiAgent[] {
     }
   }
 
-  // 3. previously-seen names with lifetime stats but no live session -> grayed box.
+  // 3. previously-seen names with lifetime stats but no live session -> a disconnected box whose
+  //    dot decays yellow -> red from its last-seen time (below), instead of an instant gray-out.
   for (const name of aiStats.names()) {
     if (byName.has(name)) continue
     byName.set(name, {
@@ -810,6 +844,23 @@ function agentsSnapshot(): AiAgent[] {
       roles: agentRoles[name] ?? [],
       effort: agentEfforts[name],
       connected: false,
+      lastSeen: active.get(name),
+      stats: aiStats.statsFor(name),
+      run: aiStats.runStatsFor(name)
+    })
+  }
+
+  // 4. recently-active names not covered above (e.g. an agent that connected, did no matches, then
+  //    cleanly disconnected). Keep its box visible so it decays yellow -> red rather than vanishing.
+  for (const [name, ts] of active) {
+    if (byName.has(name)) continue
+    byName.set(name, {
+      name,
+      kind: 'mcp',
+      roles: agentRoles[name] ?? [],
+      effort: agentEfforts[name],
+      connected: false,
+      lastSeen: ts,
       stats: aiStats.statsFor(name),
       run: aiStats.runStatsFor(name)
     })

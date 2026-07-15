@@ -31,6 +31,24 @@ function lastLine(s: string): string {
   return (nl >= 0 ? t.slice(nl + 1) : t).slice(0, 90)
 }
 
+// Presence dot thresholds, measured from an agent's last MCP signal (any tool call OR a next_batch
+// poll ~every 45s). A working agent keeps signalling, so it stays green even across a long think or
+// one slow `match`; it only yellows if it actually goes quiet, then reds after an hour.
+const PRESENCE_GREEN_MS = 5 * 60_000 // fresh: working, or connected-and-polling -> green
+const PRESENCE_YELLOW_MS = 60 * 60_000 // quiet but seen within the hour -> yellow (grace), then red
+
+/** Presence dot class for an agent. API providers are always reachable (we hold the key) so they read
+ *  online. MCP agents decay green -> yellow -> red by time since their last signal. `live` (a tool is
+ *  running right now) adds a pulse. */
+function presenceClass(agent: AiAgent, live: boolean, now: number): string {
+  if (agent.kind === 'api') return live ? 'online live' : 'online'
+  const ts = agent.lastSeen ?? 0
+  const age = now - ts
+  if (ts && age < PRESENCE_GREEN_MS) return live ? 'online live' : 'online'
+  if (ts && age < PRESENCE_YELLOW_MS) return 'stale'
+  return 'offline'
+}
+
 export interface AgentView {
   agent: AiAgent
   batch?: Batch
@@ -86,6 +104,13 @@ export default function Controller({
   const [genTail, setGenTail] = useState('') // the in-flight scheduler's streamed output (one gen at a time)
   const [genLogOpen, setGenLogOpen] = useState(false)
   useEffect(() => window.tangos.onGenOutput(setGenTail), [])
+  // Re-render every 30s so a quiet agent's presence dot decays green -> yellow -> red on time even
+  // when no state push arrives (nothing else forces a render while an agent sits idle/disconnected).
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   // Latest run per agent in a single pass (instead of filter+sort over all runs per agent on
   // every output chunk - that was quadratic during a long scan and made the view lag/drop).
@@ -108,10 +133,11 @@ export default function Controller({
       const done = batch ? batch.items.filter((i) => i.done).length : 0
       const total = batch ? batch.items.length : 0
       const batchDone = batch?.status === 'done'
-      // The agent's QUEUE: everything not yet worked through. queueRemaining counts unfinished
-      // functions across those batches - the "how much work is lined up" number in the header.
+      // The agent's QUEUE: everything not yet worked through. queueRemaining counts targets the agent
+      // has NOT yet worked (neither matched nor attempted) across those batches - it ticks down as the
+      // agent grinds each one, matched or not, so the header reflects real work left, not just misses.
       const queue = batches.filter((b) => b.targetAgent === agent.name && b.status !== 'done')
-      const queueRemaining = queue.reduce((n, b) => n + b.items.filter((i) => !i.done).length, 0)
+      const queueRemaining = queue.reduce((n, b) => n + b.items.filter((i) => !(i.worked || i.done)).length, 0)
       const queuedBatches = queue.filter((b) => b.status === 'queued').length
       const latest = latestByName.get(agent.name)
       const live = !!latest && latest.status === 'running'
@@ -200,9 +226,11 @@ export default function Controller({
             const col = aiColor(a.name)
             const pct = total ? Math.round((done / total) * 100) : 0
             const hit = st.matchAttempts ? Math.round(st.hitRate * 100) : null
-            // API providers are always available (we hold the key) - never grayed offline.
+            // API providers are always available (we hold the key). Boxes never gray out now -
+            // presence is shown by the dot's color (green/yellow/red), not by fading the whole box.
             const available = a.kind === 'api' || a.connected
-            const state = live ? 'live' : available ? 'idle' : 'off'
+            const state = live ? 'live' : 'idle'
+            const dotClass = presenceClass(a, live, now)
             const isLooping = looping.includes(a.name)
             // Actively running its API driver right now (a.connected = apiDriving on the main side;
             // busy covers the click->spawn gap). Drive flips to a red Stop while this is true.
@@ -242,7 +270,16 @@ export default function Controller({
                   </div>
                 )}
                 <div className="aib-top">
-                  <span className={`status-dot ${live ? 'running' : available ? 'ok' : 'blocked'}`} />
+                  <span
+                    className={`status-dot ${dotClass}`}
+                    title={
+                      dotClass.startsWith('online')
+                        ? 'Connected / active'
+                        : dotClass === 'stale'
+                          ? 'Quiet - last signal within the hour'
+                          : 'Offline - no signal for over an hour'
+                    }
+                  />
                   <span className="aib-name" style={{ color: col }}>
                     {a.name}
                   </span>
@@ -400,7 +437,7 @@ export default function Controller({
                           : 'Generate a role-fit batch of this size and add it to the queue - press again to line up more'
                       }
                     >
-                      <Sparkles size={12} /> {loopSel ? 'Start pulling' : 'Add to queue'}
+                      <Sparkles size={12} /> {loopSel ? 'Start pulling' : 'Add recommended to queue'}
                     </button>
                   </div>
                   {cartCount > 0 && (
@@ -408,27 +445,33 @@ export default function Controller({
                       <ShoppingCart size={12} /> Add chosen functions ({cartCount})
                     </button>
                   )}
-                  {(driving || isLooping || canDrive) && (
-                    <div className="aib-drive-row">
-                      {driving || isLooping ? (
-                        <button
-                          className="mini-btn stop"
-                          onClick={() => window.tangos.stopAi(a.name)}
-                          title={driving ? 'Stop - finishes nothing further; matches found so far are kept' : 'Stop pulling batches'}
-                        >
-                          <Square size={12} /> Stop
-                        </button>
-                      ) : (
-                        <button
-                          className="mini-btn go"
-                          onClick={() => drive(a.name)}
-                          title={`Work through the queue (${queueRemaining} function${queueRemaining === 1 ? '' : 's'}) via this AI's API key`}
-                        >
-                          <Play size={12} /> Drive queue ({queueRemaining})
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  {/* Stop only exists for console-driven API agents (no chat channel to stop them). An
+                      MCP-connected agent is stopped by telling it to stop in chat, so it gets no button. */}
+                  {(() => {
+                    const showStop = a.kind === 'api' && (driving || isLooping)
+                    if (!showStop && !canDrive) return null
+                    return (
+                      <div className="aib-drive-row">
+                        {showStop ? (
+                          <button
+                            className="mini-btn stop"
+                            onClick={() => window.tangos.stopAi(a.name)}
+                            title={driving ? 'Stop - finishes nothing further; matches found so far are kept' : 'Stop pulling batches'}
+                          >
+                            <Square size={12} /> Stop
+                          </button>
+                        ) : (
+                          <button
+                            className="mini-btn go"
+                            onClick={() => drive(a.name)}
+                            title={`Work through the queue (${queueRemaining} function${queueRemaining === 1 ? '' : 's'}) via this AI's API key`}
+                          >
+                            <Play size={12} /> Drive queue ({queueRemaining})
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
             )

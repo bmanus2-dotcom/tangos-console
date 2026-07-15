@@ -261,6 +261,8 @@ export interface BatchItem {
   srcPath?: string
   targetHex?: string // ROM target bytes (from the scheduler) so a console-driven worklist is complete
   done?: boolean // set true once this target byte-matches (drives batch % complete)
+  worked?: boolean // set true once an agent has ATTEMPTED this target (match run, hit or miss); drives
+  // the "N in queue" count down as targets are worked, distinct from `done` (verified match only)
 }
 
 export type BatchStatus = 'queued' | 'active' | 'done'
@@ -306,7 +308,8 @@ export interface AiStats {
 }
 
 /** A persistent AI in the controller: either an MCP client that connected, or a
- *  provider we hold an API key for. Boxes stay on screen (grayed) after disconnect. */
+ *  provider we hold an API key for. Boxes stay on screen after disconnect; the presence
+ *  dot decays green -> yellow -> red by time since the last signal (see lastSeen). */
 export interface AiAgent {
   name: string
   kind: AiKind
@@ -316,7 +319,8 @@ export interface AiAgent {
   connected: boolean // mcp: a live session exists; api: currently driving a batch
   sessions?: number // mcp: number of live sessions collapsed under this name
   currentBatchId?: string
-  lastSeen?: number
+  lastSeen?: number // ms of this agent's last MCP request (any tool call OR next_batch poll). Persists
+  // across disconnect so the dot can show yellow for up to an hour, then red. undefined = never seen.
   stats: AiStats // all-time tallies
   run?: AiStats // current-run-only tallies (zeroed each app launch)
 }

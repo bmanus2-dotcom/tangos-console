@@ -275,6 +275,10 @@ export class McpManager {
   private transports = new Map<string, StreamableHTTPServerTransport>()
   private clients = new Map<string, ConnectedClient>()
   private lastSeen = new Map<string, number>() // sessionId -> last request time, for evicting ghosts
+  // agent NAME -> last request time. Unlike lastSeen (per session, deleted on disconnect) this
+  // survives eviction/disconnect, so the UI can keep showing a just-gone agent as yellow (recently
+  // active) for an hour before it goes red. Pruned in evictStale once well past the red threshold.
+  private lastActive = new Map<string, number>()
   private staleTimer: ReturnType<typeof setInterval> | null = null
   private _port: number | null = null
   // Raw endpoint traffic - lets the human tell "nothing ever hit us" (client never
@@ -318,6 +322,11 @@ export class McpManager {
   getClients(): ConnectedClient[] {
     return [...this.clients.values()]
   }
+  /** agent name -> ms of its last request (any tool call or next_batch poll), remembered across
+   *  disconnect. Lets the controller color each agent's presence dot by recency. */
+  activityByName(): Map<string, number> {
+    return new Map(this.lastActive)
+  }
   setRoles(id: string, roles: string[]): void {
     const c = this.clients.get(id)
     if (!c) return
@@ -329,13 +338,22 @@ export class McpManager {
   }
 
   private touch(id?: string): void {
-    if (id) this.lastSeen.set(id, Date.now())
+    if (!id) return
+    const now = Date.now()
+    this.lastSeen.set(id, now)
+    // Remember activity by NAME too, so a working agent that later drops still colors correctly.
+    const name = this.clients.get(id)?.name
+    if (name) this.lastActive.set(name, now)
   }
 
-  // Evict sessions that have gone silent - an agent that dropped without a clean
-  // DELETE (script process.exit, editor session drop) leaves a ghost otherwise.
+  // Evict sessions that have gone silent. A WORKING agent signals constantly (a request per tool
+  // call, plus a next_batch poll every ~45s), so it never nears this window - the old 90s cutoff was
+  // just too tight and evicted agents mid-think, closing their transport. 5 min clears only genuinely
+  // dropped sessions. Coloring lives elsewhere: the persistent lastActive map (kept for hours) decays
+  // a gone agent's dot green -> yellow -> red, so a longer window here would only make a crashed agent
+  // wrongly read as a live MCP session (blocking API-driving of that name) for no UI benefit.
   private evictStale(): void {
-    const STALE_MS = 90_000
+    const STALE_MS = 5 * 60_000
     const now = Date.now()
     let changed = false
     for (const id of [...this.clients.keys()]) {
@@ -350,6 +368,11 @@ export class McpManager {
         this.lastSeen.delete(id)
         changed = true
       }
+    }
+    // Forget name-activity once it is well past the red threshold, so the map cannot grow unbounded
+    // over a long session (the dot is already red by then, so dropping it changes nothing visible).
+    for (const [name, ts] of [...this.lastActive]) {
+      if (now - ts > 2 * 60 * 60_000) this.lastActive.delete(name)
     }
     if (changed) this.onClientsChange?.()
   }
@@ -389,7 +412,7 @@ export class McpManager {
               roles: remembered ?? [],
               connectedAt: Date.now()
             })
-            this.lastSeen.set(id, Date.now())
+            this.touch(id) // records lastSeen + lastActive[initName]
             this.onClientsChange?.()
           }
         })
@@ -410,6 +433,7 @@ export class McpManager {
               c.name = normalizeName(info?.name)
               const remembered = this.roleForName?.(c.name)
               if (remembered) c.roles = remembered // restore the roles this agent had before
+              this.touch(sid) // re-record activity under the refined name
               this.onClientsChange?.()
             }
           }

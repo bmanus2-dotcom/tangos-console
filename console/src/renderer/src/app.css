@@ -247,6 +247,11 @@ html[data-theme='deepsea'] .app-bg-bubble { opacity: 0.5; }
 .status-dot.ok { background: rgb(var(--aero-matched-rgb)); }
 .status-dot.error { background: rgb(var(--aero-danger-rgb)); }
 .status-dot.blocked { background: rgb(var(--aero-danger-rgb)); }
+/* Controller presence: green connected/working, yellow quiet-within-the-hour, red offline. */
+.status-dot.online { background: rgb(var(--aero-matched-rgb)); box-shadow: 0 0 6px rgba(var(--aero-matched-rgb),0.7); }
+.status-dot.online.live { animation: pulse 1s infinite; }
+.status-dot.stale { background: #eab308; box-shadow: 0 0 6px rgba(234,179,8,0.6); }
+.status-dot.offline { background: rgb(var(--aero-danger-rgb)); opacity: 0.85; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 .run .out {
