@@ -1165,6 +1165,8 @@ html[data-theme='deepsea'] .app-bg-bubble { opacity: 0.5; }
 .repo-warn.behind { color: #0b4a6f; background: rgba(14,165,233,0.14); border-color: rgba(14,165,233,0.5); }
 /* brief post-update confirmation - green */
 .repo-warn.ok { color: #14532d; background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.5); }
+/* a failed action (update conflict, push/clone error) - red, never mistaken for a green "ok" */
+.repo-warn.err { color: #7f1d1d; background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.5); }
 /* "a newer app release is out" - violet, distinct from the repo-staleness blue */
 .repo-warn.update { color: #4c1d95; background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.5); }
 /* Controller header: all-time vs this-run stat toggle */

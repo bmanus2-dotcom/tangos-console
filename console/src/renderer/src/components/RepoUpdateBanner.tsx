@@ -16,7 +16,8 @@ export default function RepoUpdateBanner({
 }): JSX.Element | null {
   const [status, setStatus] = useState<RepoUpdateStatus | null>(null)
   const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<string | null>(null)
+  // A transient banner message carries its outcome, so a failure is never rendered as a green "ok".
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [progress, setProgress] = useState<{ label: string; pct: number } | null>(null)
 
   // Live phase + percent streamed from the main process during an Update, so the button isn't a
@@ -55,12 +56,12 @@ export default function RepoUpdateBanner({
       const r = await window.tangos.repoPull()
       if (r.ok) {
         setStatus(await window.tangos.repoUpdateStatus())
-        setMsg(r.note ? `Updated to the latest. ${r.note}` : 'Updated to the latest.')
+        setMsg({ text: r.note ? `Updated to the latest. ${r.note}` : 'Updated to the latest.', ok: true })
         setTimeout(() => setMsg(null), r.note ? 15000 : 4000) // linger if there's a backup path to read
       } else if (r.err && /conflict|rebase/i.test(r.err)) {
-        setMsg("Couldn't auto-update - your local changes conflict with the new upstream work. Nothing was changed; reconcile manually.")
+        setMsg({ text: "Couldn't auto-update - your local changes conflict with the new upstream work. Nothing was changed; reconcile manually.", ok: false })
       } else {
-        setMsg(`Update failed: ${r.err ?? 'unknown error'}`)
+        setMsg({ text: `Update failed: ${r.err ?? 'unknown error'}`, ok: false })
       }
     } finally {
       setBusy(false)
@@ -75,7 +76,7 @@ export default function RepoUpdateBanner({
     try {
       const res = await window.tangos.cloneAndOpen(github)
       if (res.ok && res.repo?.path) onRepo(res.repo)
-      else if (res.error) setMsg('Clone failed: ' + res.error)
+      else if (res.error) setMsg({ text: 'Clone failed: ' + res.error, ok: false })
     } finally {
       setBusy(false)
     }
@@ -88,15 +89,24 @@ export default function RepoUpdateBanner({
       const r = await window.tangos.repoPushWorkPr()
       if (r.ok) {
         if (r.url) window.tangos.openExternal(r.url)
-        setMsg('Opened a PR with your local commits.')
+        setMsg({ text: 'Opened a PR with your local commits.', ok: true })
         setStatus(await window.tangos.repoUpdateStatus())
       } else {
-        setMsg(r.error?.includes('signed into GitHub') ? 'Sign into GitHub in Settings, then try again.' : `Push failed: ${r.error ?? 'unknown error'}`)
+        setMsg({ text: r.error?.includes('signed into GitHub') ? 'Sign into GitHub in Settings, then try again.' : `Push failed: ${r.error ?? 'unknown error'}`, ok: false })
       }
     } finally {
       setBusy(false)
     }
   }
+
+  // Single source of truth for the transient message row: green + check on success, red + alert on
+  // failure. Rendered in exactly one place per branch so an error never shows up as a green "ok".
+  const msgRow = msg && (
+    <div className={`repo-warn ${msg.ok ? 'ok' : 'err'}`}>
+      {msg.ok ? <Check size={14} /> : <AlertTriangle size={14} />}
+      <span>{msg.text}</span>
+    </div>
+  )
 
   // Case 1: a Download-ZIP snapshot, not a real checkout.
   if (repo.path && repo.isGit === false) {
@@ -119,7 +129,7 @@ export default function RepoUpdateBanner({
             {busy ? <Loader2 size={13} className="spin" /> : <Download size={13} />} Clone fresh copy
           </button>
         )}
-        {msg && <span className="repo-warn-msg">{msg}</span>}
+        {msg && <span className="repo-warn-msg">{msg.text}</span>}
       </div>
     )
   }
@@ -155,7 +165,6 @@ export default function RepoUpdateBanner({
                   <span className="repo-warn-progress-label">{progress.label}</span>
                 </div>
               )}
-              {msg && <span className="repo-warn-msg">{msg}</span>}
             </div>
           )}
           {unpublished > 0 && (
@@ -170,25 +179,12 @@ export default function RepoUpdateBanner({
               </button>
             </div>
           )}
-          {msg && (
-            <div className="repo-warn ok">
-              <Check size={14} />
-              <span>{msg}</span>
-            </div>
-          )}
+          {msgRow}
         </>
       )
     }
   }
 
   // Brief confirmation after an update lands (or a failure message), else nothing.
-  if (msg) {
-    return (
-      <div className="repo-warn ok">
-        <Check size={14} />
-        <span>{msg}</span>
-      </div>
-    )
-  }
-  return null
+  return msgRow || null
 }
