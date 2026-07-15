@@ -152,6 +152,64 @@ function capOutput(s: string): string {
   return `${head}\n\n...[${cut} chars trimmed to save context - full output is in the human's live viewer. Narrow addr/size, or use --brief/--quiet.]...\n\n${tail}`
 }
 
+// The "HOW TO WORK EACH TARGET" guide appended to a next_batch reply. Same substance for everyone,
+// but the framing is per-agent: capable long-context models get prose; Grok asked for terse,
+// explicit tool-call lines (its own rewrite). Keyed by the normalized connect name (see
+// normalizeName) so tailoring is automatic - the server already knows who is pulling. Add another
+// client by dropping a string into WORK_GUIDES; anything unlisted falls back to the default.
+const WORK_GUIDE_DEFAULT =
+  '\n\nHOW TO WORK EACH TARGET (never end a turn on a failed call):\n' +
+  '1. Every target has a ready `match` call above (required args: c, func, addr, size). Use it verbatim - never omit `c`.\n' +
+  '2. BEFORE any match/fdiff/falign on a target, make sure its `c` candidate file EXISTS. If it does not, CREATE the draft first from `worklist --addr <addr> --pretty` (or disasm / chaos-db.json). Never diff a file you have not created - that is the #1 avoidable error (FileNotFoundError).\n' +
+  '3. On ANY tool error - validation (-32602), compile failure, OR missing-file/FileNotFoundError - diagnose and RETRY in the SAME turn (check tangos.json tools[] for required args if unsure). A turn may only end on a successful call or an explicit "blocked because X" hand-off sentence - never right after a failed call.\n' +
+  '4. For first-pass triage use `fdiff` with `"quiet": true` (returns just `mismatches=N/total`) - do NOT lean on match\'s full byte dump or `brief` to triage. Pull the full diff only once you are fixing a specific block. `falign` handles size-mismatched candidates but is EXPENSIVE on large functions - pass `"quiet": true` or `"limit": 1` and fix the earliest diverging block first.\n' +
+  '5. Overlay (ov*) targets: keep the `module` in the ready call - it auto-loads the overlay binary, so you do NOT need bin/base. (If overlay bytes read back empty/0, your repo is a stale ZIP snapshot - use a fresh `git clone`.) Run heavy tools one at a time; pass `"brief": true` for large functions.\n' +
+  '6. End EVERY working turn with a one-line status: what you just did, the current best divergence, and the single next action. Never end a turn silently after a tool result.\n' +
+  '7. When these targets are done, call `next_batch` for more. It BLOCKS until there is work (or ~45s), so just call it - no waiting, sleeping, or heartbeat loop on your side. If it returns empty (a timeout), your entire response is one more next_batch call to keep parking - no worklist, coddog, notes, or self-assigned targets. After several empty waits it tells you to hand back.\n' +
+  '8. Coordination is automatic - do NOT claim or push anything yourself. Your batch is already yours (the console hands each agent a distinct set), and when the operator is signed into GitHub the console auto-collects your matched files and opens a per-agent PR. Just match the targets; landing + PRs are handled for you.\n' +
+  '9. Stay in your lane: edit source ONLY for the targets above. If an edit regresses a function (worse diff or bigger size), REVERT it - never leave a tracked source file worse than you found it. Keep scratch files, notes, and session reports in a temp/scratch dir, NEVER inside the repo or beside source files.\n' +
+  'Fallback if native MCP tools are unavailable in your client: run `npx tsx scripts/mcp-run.mts <calls.json> <your-name>` (e.g. grok) from the tangOS console dir, where calls.json is [{"tool":"match","args":{...}}]. Pass your name so the live viewer tags your runs correctly (omitting it shows "agent").'
+
+// Grok profile: short imperative lines with explicit `tool { args }` framing. Note step 2 forces
+// the module through on every fdiff (reuse the one in the ready match call) - a client-side guard
+// against the "module None not found" foot-gun Grok kept hitting when it omitted it.
+const WORK_GUIDE_GROK =
+  '\n\nHOW TO WORK EACH TARGET (terse - explicit calls; never end a turn on a failed call):\n' +
+  '1. File check: candidate `c` must exist. Missing -> create it FIRST via `worklist --addr <addr> --pretty` (or `disasm`), save to `c`. Never fdiff/match a file you did not create (FileNotFoundError = top wasted turn).\n' +
+  '2. Triage: fdiff { c, name: <func>, addr, size, module, quiet: true }. For overlays copy the ovNNN module from the ready `match` call (an ov* module auto-loads its binary - no bin/base); arm9/main targets default to arm9, so module is optional there. Do NOT triage off match\'s full dump.\n' +
+  '3. Fix the earliest mismatch, re-run fdiff. On ANY error (-32602, compile fail, missing file): fix and RETRY the SAME turn (see tangos.json tools[] for required args). End a turn only on a success or an explicit "blocked because X".\n' +
+  '4. Size mismatch: `falign { ..., quiet: true }` (or limit:1) to line them up, fix the earliest block. Confirm a match with `match { c, func, addr, size }` - never omit `c`. //cpp files: first line must be exactly //cpp; fdiff/match switch to C++ automatically.\n' +
+  '5. mismatches=0 -> leave `c` in src/ as a real match. Near-miss / nonmatching -> write to the nearmiss DB (tools/nearmiss_db.py), NOT a fake green src/ file. Edit regressed it (worse diff / bigger size)? REVERT.\n' +
+  '6. Known wall? verify your near-miss IS one, say so in one line, move on - do not grind.\n' +
+  '7. End every working turn with ONE line: what you did / best divergence now / next action.\n' +
+  '8. Targets done -> call next_batch again (blocks server-side ~45s; no polling loop). Coordination is automatic: do NOT claim or push - the console auto-collects your matches and opens your PR. Edit source only for the targets above; keep scratch in a temp dir, never beside source.\n' +
+  'Fallback if native MCP is unavailable: `npx tsx scripts/mcp-run.mts <calls.json> grok` from the tangOS console dir (calls.json = [{"tool":"match","args":{...}}]).'
+
+const WORK_GUIDES: Record<string, string> = { Grok: WORK_GUIDE_GROK }
+
+/** The working guide for this agent: its profile if one exists, else the default. Empty when the
+ *  repo has no `match` tool (nothing to drive). */
+function workGuideFor(name: string | undefined, hasMatch: boolean): string {
+  if (!hasMatch) return ''
+  return (name && WORK_GUIDES[name]) || WORK_GUIDE_DEFAULT
+}
+
+/** Explain an empty next_batch to an agent that IS connected but keeps getting nothing: the queue
+ *  is full of work addressed to OTHER agents. Without this the agent looks broken while the human
+ *  stares at a full list_batches. Empty string when there is genuinely nothing to explain (no
+ *  queued work, or a race left some pullable). */
+function emptyQueueReason(all: Batch[], me?: string): string {
+  const queued = all.filter((b) => b.status === 'queued')
+  if (queued.length === 0) return '' // truly idle - nothing addressed to anyone
+  const mineNow = queued.filter((b) => !b.targetAgent || b.targetAgent === me).length
+  if (mineNow > 0) return '' // a batch for me exists (taken between the wait and now) - just re-poll
+  const byAgent = new Map<string, number>()
+  for (const b of queued) byAgent.set(b.targetAgent!, (byAgent.get(b.targetAgent!) ?? 0) + 1)
+  const breakdown = [...byAgent.entries()].map(([n, c]) => `${c}->${n}`).join(', ')
+  const you = me ? ` you (connected as "${me}")` : ' you'
+  return ` [why empty] ${queued.length} batch(es) are queued but none are addressed to${you} - they target other agents [${breakdown}]. This is not a bug: you only receive batches that are unassigned or match your exact connect name. Tell the operator to reassign one to "${me ?? 'your name'}" or clear its target; do NOT self-assign.`
+}
+
 function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClient | undefined): McpServer {
   const ctx = getCtx()
   // Surface the repo's contribution rules to every connecting AI on `initialize` (MCP
@@ -195,11 +253,14 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
           // eventually hands back rather than holding the session forever.
           const n = idle ? (idle.emptyPolls = (idle.emptyPolls ?? 0) + 1) : 1
           const IDLE_CAP = 8
-          const text =
+          // If the queue is actually full of work for OTHER agents, say so - otherwise a correctly
+          // parked agent reads as broken while the human sees a full list_batches.
+          const reason = emptyQueueReason(api.list(), idle?.name)
+          const base =
             n >= IDLE_CAP
               ? `[tangos] still no work after ${n} waits (~${Math.round((n * 45) / 60)} min idle). STOP - hand back to the human with one short line, e.g. "queue empty, standing by - re-engage me when there's work."`
               : `[tangos] no work yet (waited 45s, empty ${n}/${IDLE_CAP}). Call next_batch again - it BLOCKS until a batch arrives, so it costs no thinking. Your ENTIRE next response is a single next_batch call: no heartbeat, no analysis, no other tools, no self-assigned targets.`
-          return { content: [{ type: 'text' as const, text }] }
+          return { content: [{ type: 'text' as const, text: base + reason }] }
         }
         if (idle) idle.emptyPolls = 0
         const c = getClient()
@@ -221,20 +282,9 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
               .join('\n')
           : ''
 
-        // How to actually run the work without stalling on the first tool error.
-        const guide = hasMatch
-          ? '\n\nHOW TO WORK EACH TARGET (never end a turn on a failed call):\n' +
-            '1. Every target has a ready `match` call above (required args: c, func, addr, size). Use it verbatim - never omit `c`.\n' +
-            '2. BEFORE any match/fdiff/falign on a target, make sure its `c` candidate file EXISTS. If it does not, CREATE the draft first from `worklist --addr <addr> --pretty` (or disasm / chaos-db.json). Never diff a file you have not created - that is the #1 avoidable error (FileNotFoundError).\n' +
-            '3. On ANY tool error - validation (-32602), compile failure, OR missing-file/FileNotFoundError - diagnose and RETRY in the SAME turn (check tangos.json tools[] for required args if unsure). A turn may only end on a successful call or an explicit "blocked because X" hand-off sentence - never right after a failed call.\n' +
-            '4. For first-pass triage use `fdiff` with `"quiet": true` (returns just `mismatches=N/total`) - do NOT lean on match\'s full byte dump or `brief` to triage. Pull the full diff only once you are fixing a specific block. `falign` handles size-mismatched candidates but is EXPENSIVE on large functions - pass `"quiet": true` or `"limit": 1` and fix the earliest diverging block first.\n' +
-            '5. Overlay (ov*) targets: keep the `module` in the ready call - it auto-loads the overlay binary, so you do NOT need bin/base. (If overlay bytes read back empty/0, your repo is a stale ZIP snapshot - use a fresh `git clone`.) Run heavy tools one at a time; pass `"brief": true` for large functions.\n' +
-            '6. End EVERY working turn with a one-line status: what you just did, the current best divergence, and the single next action. Never end a turn silently after a tool result.\n' +
-            '7. When these targets are done, call `next_batch` for more. It BLOCKS until there is work (or ~45s), so just call it - no waiting, sleeping, or heartbeat loop on your side. If it returns empty (a timeout), your entire response is one more next_batch call to keep parking - no worklist, coddog, notes, or self-assigned targets. After several empty waits it tells you to hand back.\n' +
-            '8. Coordination is automatic - do NOT claim or push anything yourself. Your batch is already yours (the console hands each agent a distinct set), and when the operator is signed into GitHub the console auto-collects your matched files and opens a per-agent PR. Just match the targets; landing + PRs are handled for you.\n' +
-            '9. Stay in your lane: edit source ONLY for the targets above. If an edit regresses a function (worse diff or bigger size), REVERT it - never leave a tracked source file worse than you found it. Keep scratch files, notes, and session reports in a temp/scratch dir, NEVER inside the repo or beside source files.\n' +
-            'Fallback if native MCP tools are unavailable in your client: run `npx tsx scripts/mcp-run.mts <calls.json> <your-name>` (e.g. grok) from the tangOS console dir, where calls.json is [{"tool":"match","args":{...}}]. Pass your name so the live viewer tags your runs correctly (omitting it shows "agent").'
-          : ''
+        // How to actually run the work without stalling on the first tool error - tailored to the
+        // connecting agent (Grok gets a terser, explicit-call variant; everyone else the default).
+        const guide = workGuideFor(c?.name, hasMatch)
 
         const walls = desc.project?.knownWalls
         const wallsNote = walls
@@ -256,14 +306,24 @@ function buildMcpServer(getCtx: () => McpContext, getClient: () => ConnectedClie
     )
     server.tool(
       'list_batches',
-      'List the tangOS Console batch queue (status, title, target count) without consuming anything.',
+      'List the tangOS Console batch queue: status, which agent each batch is addressed to, and whether YOU can pull it via next_batch. Shows the whole board (not just your work), so use the "pullable by you" count - not the raw total - to judge if there is work for you. Consumes nothing.',
       {},
       async () => {
+        const me = getClient()?.name
         const q = api.list()
-        const text = q.length
-          ? q.map((b) => `${b.status.toUpperCase().padEnd(6)} "${b.title}" (${b.items.length} targets)`).join('\n')
-          : '(no batches queued)'
-        return { content: [{ type: 'text' as const, text }] }
+        if (!q.length) return { content: [{ type: 'text' as const, text: '(no batches queued)' }] }
+        // You can pull a batch only if it is still queued AND unassigned or addressed to your exact
+        // connect name - the same rule next_batch uses. Surfacing it here ends the "human sees 32,
+        // agent pulls 0" confusion.
+        const canPull = (b: Batch): boolean =>
+          b.status === 'queued' && (!b.targetAgent || b.targetAgent === me)
+        const rows = q.map((b) => {
+          const target = (b.targetAgent ? `-> ${b.targetAgent}` : '-> any agent').padEnd(16)
+          return `${b.status.toUpperCase().padEnd(6)} ${target} "${b.title}" (${b.items.length} targets)${canPull(b) ? '   [you can pull]' : ''}`
+        })
+        const pullable = q.filter(canPull).length
+        const summary = `You are "${me ?? 'unknown'}". ${pullable} of ${q.length} batch(es) are pullable by you via next_batch; the rest are addressed to other agents.`
+        return { content: [{ type: 'text' as const, text: `${summary}\n\n${rows.join('\n')}` }] }
       }
     )
   }
