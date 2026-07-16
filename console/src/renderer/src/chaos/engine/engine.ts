@@ -22,6 +22,8 @@ import { paintSelectedCode } from './render/code'
 export interface EngineCallbacks {
   onModule: (m: string | null) => void
   onFunction: (f: AtlasFunction) => void
+  // Space over the focused function while WASD-travelling: toggle it in the batch cart.
+  onToggleCart: (f: AtlasFunction) => void
 }
 
 export interface ViewOptions {
@@ -34,6 +36,9 @@ export interface ViewOptions {
   selectedId?: string
   themeId: string
   layout: LayoutMode
+  // Function NAMES currently in the batch cart - painted with a glowing rainbow overlay so you can
+  // spot your picks anywhere on the map. Names (not ids) to match the cart's ref-keyed membership.
+  cartRefs?: Set<string>
 }
 
 declare global {
@@ -116,6 +121,9 @@ export class ChaosEngine {
   private lastEmittedSelectedId: string | null = null
   private travelAnim: { from: Rect; to: Rect; t0: number; dur: number } | null = null
   private lastTravelAt = 0
+  // Indices into world.fns of the functions currently in the batch cart, recomputed only when the
+  // cart set or the world changes so the per-frame rainbow overlay is a cheap index walk.
+  private cartNodes: number[] = []
   /** What the camera is currently flying toward - re-issued after a rebuild so
    *  panel reflows mid-flight can never strand the camera partway there. */
   private flightTarget: { kind: 'fn'; id: string } | { kind: 'mod'; name: string } | { kind: 'fit' } | null = null
@@ -200,6 +208,7 @@ export class ChaosEngine {
         this.focusFunction(next.selectedId, prev.selectedId)
       this.lastEmittedSelectedId = next.selectedId ?? null
     }
+    if ('cartRefs' in next && next.cartRefs !== prev.cartRefs) this.recomputeCartNodes()
     this.invalidate()
   }
 
@@ -318,9 +327,36 @@ export class ChaosEngine {
   /** Returns true when the key was consumed. */
   key(k: string): boolean {
     if (k === 'Escape') return this.escapeOut()
+    if (k === ' ') return this.toggleFocusedInCart()
     const dir = TRAVEL_KEYS[k.toLowerCase()]
     if (dir && this.lod.band >= 2) return this.travel(dir[0], dir[1])
     return false
+  }
+
+  /** Space over the focused function: toggle it in the batch cart. Acts on the current selection, or
+   *  (while WASD-travelling, band >= 2) whatever sits under the camera centre. Returns true so the
+   *  input layer swallows the key - no page scroll. AtlasView decides add-vs-remove and ignores
+   *  already-matched functions. */
+  private toggleFocusedInCart(): boolean {
+    if (!this.opts.selectedId && this.lod.band < 2) return false
+    const n = this.travelNode()
+    if (!n) return false
+    this.cb.onToggleCart(n.f)
+    return true
+  }
+
+  /** Refresh the cart-node index list from the current cart set + world. Cheap; runs only on cart or
+   *  world change. Matches by function name (the cart is keyed by ref). */
+  private recomputeCartNodes(): void {
+    const refs = this.opts.cartRefs
+    if (!refs || refs.size === 0 || !this.world) {
+      this.cartNodes = []
+      return
+    }
+    const out: number[] = []
+    const fns = this.world.fns
+    for (let i = 0; i < fns.length; i++) if (refs.has(fns[i].f.name)) out.push(i)
+    this.cartNodes = out
   }
 
   invalidate(): void {
@@ -501,6 +537,7 @@ export class ChaosEngine {
     const relY = prev ? this.cam.y / prev.h : 0.5
     const relZ = prev ? this.cam.z / this.cam.fitZ : 1
     this.world = buildWorld(this.db, this.cssW, this.cssH, this.opts.layout, this.opts.authorResolve)
+    this.recomputeCartNodes() // indices are world-relative; the fresh layout invalidates the old ones
     this.worldGen++
     this.lod.compute(this.world, this.cssW, this.cssH)
     this.cam.setWorld(this.world.w, this.world.h, this.lod.zMax())
@@ -631,6 +668,7 @@ export class ChaosEngine {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     this.blitBase()
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    this.drawCart(now)
     this.bubble.draw(ctx, this.cam, now)
     this.drawSelection(now)
     this.drawMinimap()
@@ -643,7 +681,8 @@ export class ChaosEngine {
       !settled ||
       this.bubble.needsFrame(now) ||
       this.pendingBubble ||
-      this.travelAnim
+      this.travelAnim ||
+      this.cartNodes.length // keep the rainbow overlay animating while anything is basketed
     ) {
       this.wake()
     }
@@ -807,6 +846,50 @@ export class ChaosEngine {
     ctx.beginPath()
     ctx.roundRect(p.x - 1, p.y - 1, mw + 2, mh + 2, rad)
     ctx.stroke()
+  }
+
+  /** Glowing rainbow overlay over every function in the batch cart: an animated multi-stop rainbow
+   *  gradient stroke with a soft coloured glow, plus a faint rainbow tint on the tile. The hue phase
+   *  shifts with time so the picks shimmer - the frame loop is kept awake while the cart is non-empty
+   *  (see frame()). Each cart node gets a minimum on-screen size so picks stay findable at overview. */
+  private drawCart(now: number): void {
+    const world = this.world
+    if (!world || this.cartNodes.length === 0) return
+    const { ctx, cam } = this
+    const phase = (now / 2600) % 1 // one full rainbow sweep every ~2.6s
+    ctx.save()
+    ctx.lineJoin = 'round'
+    for (const ix of this.cartNodes) {
+      const n = world.fns[ix]
+      const p = cam.worldToScreen(n.x, n.y)
+      const mw = Math.max(n.w * cam.z, 7)
+      const mh = Math.max(n.h * cam.z * cam.sy, 7)
+      if (p.x + mw < -20 || p.y + mh < -20 || p.x > this.cssW + 20 || p.y > this.cssH + 20) continue
+      const rad = Math.max(2, Math.min(9, mw / 4, mh / 4))
+      const grad = ctx.createLinearGradient(p.x, p.y, p.x + mw, p.y + mh)
+      for (let s = 0; s <= 6; s++) {
+        const hue = (((s / 6 + phase) % 1) + 1) % 1
+        grad.addColorStop(s / 6, `hsl(${hue * 360}, 100%, 60%)`)
+      }
+      // faint rainbow tint so the tile itself reads as basketed
+      ctx.globalAlpha = 0.18
+      ctx.fillStyle = grad
+      ctx.beginPath()
+      ctx.roundRect(p.x - 1, p.y - 1, mw + 2, mh + 2, rad)
+      ctx.fill()
+      // glowing rainbow ring: a blurred coloured halo, then a crisp gradient stroke over it
+      ctx.globalAlpha = 0.95
+      ctx.strokeStyle = grad
+      ctx.shadowColor = `hsl(${((phase % 1) + 1) % 1 * 360}, 100%, 55%)`
+      ctx.shadowBlur = 16
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.roundRect(p.x - 1, p.y - 1, mw + 2, mh + 2, rad)
+      ctx.stroke()
+      ctx.shadowBlur = 0
+      ctx.stroke()
+    }
+    ctx.restore()
   }
 
   private drawPerf(): void {

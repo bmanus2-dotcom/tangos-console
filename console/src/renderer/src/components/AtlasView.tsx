@@ -282,6 +282,21 @@ export default function AtlasView({
           }
         }}
         selectedId={selectedFn?.id}
+        cartRefs={draftRefs}
+        onToggleCart={(f) => {
+          if (f.matched) return // matched functions are done - never basket them (mirrors the detail panel)
+          if (draftRefs.has(f.name)) onRemove(f.name)
+          else
+            onAdd({
+              id: `${Date.now()}-${f.name}`,
+              ref: f.name,
+              label: f.module,
+              module: f.module,
+              addr: f.addr,
+              size: f.size,
+              srcPath: f.srcPath
+            })
+        }}
         colorBy={colorBy}
         onColorBy={pickColorBy}
         authorColors={authorColors}

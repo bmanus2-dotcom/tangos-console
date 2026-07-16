@@ -334,6 +334,7 @@ export default function Controller({
                           {analyzed}/{total} analyzed · {pct}%
                         </span>
                       )}
+                      {batch?.note && <span className="aib-note">{batch.note}</span>}
                       {liveLine && <span className={`aib-live mono${live ? '' : ' done'}`}>▸ {liveLine}</span>}
                     </>
                   ) : (

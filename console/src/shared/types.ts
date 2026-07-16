@@ -280,6 +280,7 @@ export interface Batch {
   status: BatchStatus
   createdAt: number
   targetAgent?: string // addressed to one AI by name; only that AI's next_batch/drive gets it
+  note?: string // operator-facing warning shown on the box (e.g. landed short - clone behind)
 }
 
 /** A batch draft composed in the UI before it is enqueued. */
@@ -287,6 +288,7 @@ export interface BatchDraft {
   title: string
   prompt: string
   items: BatchItem[]
+  note?: string // set by genDraft when the batch came up short of the requested count
 }
 
 /** Soft cap: past this many targets, one batch's prompt is likely too big for a turn. */

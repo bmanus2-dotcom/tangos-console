@@ -13,7 +13,9 @@ export default function ChaosViewer({
   moduleFilter,
   onModule,
   onFunction,
+  onToggleCart,
   selectedId,
+  cartRefs,
   colorBy = 'status',
   onColorBy,
   authorColors,
@@ -26,7 +28,9 @@ export default function ChaosViewer({
   moduleFilter: string | null
   onModule: (m: string | null) => void
   onFunction: (f: AtlasFunction) => void
+  onToggleCart?: (f: AtlasFunction) => void
   selectedId?: string
+  cartRefs?: Set<string>
   colorBy?: 'status' | 'author'
   onColorBy?: (c: 'status' | 'author') => void
   authorColors?: Map<string, string>
@@ -38,8 +42,8 @@ export default function ChaosViewer({
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<ChaosEngine | null>(null)
-  const cbRef = useRef({ onModule, onFunction })
-  cbRef.current = { onModule, onFunction }
+  const cbRef = useRef({ onModule, onFunction, onToggleCart })
+  cbRef.current = { onModule, onFunction, onToggleCart }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -47,7 +51,8 @@ export default function ChaosViewer({
     if (!canvas || !el) return
     const engine = new ChaosEngine(canvas, {
       onModule: (m) => cbRef.current.onModule(m),
-      onFunction: (f) => cbRef.current.onFunction(f)
+      onFunction: (f) => cbRef.current.onFunction(f),
+      onToggleCart: (f) => cbRef.current.onToggleCart?.(f)
     })
     engineRef.current = engine
     const input = new InputController(canvas, engine)
@@ -88,10 +93,11 @@ export default function ChaosViewer({
       moduleFilter,
       showNearMiss,
       selectedId,
+      cartRefs,
       themeId: 'classic',
       layout
     })
-  }, [colorBy, authorColors, authorResolve, authorFilter, moduleFilter, showNearMiss, selectedId, layout])
+  }, [colorBy, authorColors, authorResolve, authorFilter, moduleFilter, showNearMiss, selectedId, cartRefs, layout])
 
   const refocus = (): void => canvasRef.current?.focus()
 

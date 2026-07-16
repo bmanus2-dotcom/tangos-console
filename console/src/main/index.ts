@@ -1300,8 +1300,11 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
   )
   // Over-fetch beyond `count`: sibling-name dupes get dropped below, so without headroom "give me
   // 20" quietly lands short. coddog ranks the whole corpus regardless of limit (it only truncates
-  // the result), so a bigger limit is nearly free.
-  const plan = genPlanFor(role, count + taken.size + Math.max(count, 16))
+  // the result), so a bigger limit is nearly free. Extra headroom when the live-matched cross-check
+  // is on: on a clone that's behind main, a chunk of each pull is dropped as already-matched
+  // upstream (see the matchedLive filter below), so budget for that drop instead of landing short.
+  const liveDropBudget = state.descriptor.data?.committedDbUrl ? count * 2 : 0
+  const plan = genPlanFor(role, count + taken.size + Math.max(count, 16) + liveDropBudget)
   // The planned scheduler, falling back to coddog, then any read-only limit+out tool.
   const sched =
     state.descriptor.tools.find((t) => t.id === plan.schedId) ??
@@ -1458,7 +1461,16 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
     'Match these targets. Each was picked by opcode similarity to an already-matched sibling ' +
     '(shown per target) - lean on that sibling as scaffolding. Run `match` on each; use `fdiff` on near-misses.'
   const label = role && role !== 'Unassigned' ? role : 'Similarity'
-  return { title: `${label} batch (${items.length})`, prompt, items } satisfies BatchDraft
+  // Landed short of what was asked? Say why. A high dropped-as-matched count means the clone is
+  // behind main (the fix is to sync, not to grind); otherwise the role's pool is simply drained.
+  let note: string | undefined
+  if (items.length < count) {
+    note =
+      droppedMatched > 0
+        ? `Got ${items.length} of ${count} - ${droppedMatched} candidate${droppedMatched === 1 ? ' was' : 's were'} already matched on main. Your clone is behind; hit Refresh (or pull) to sync, then generate again.`
+        : `Got ${items.length} of ${count} - that's all the unmatched targets this role can find right now.`
+  }
+  return { title: `${label} batch (${items.length})`, prompt, items, note } satisfies BatchDraft
 }
 
 ipcMain.handle('batch:generate', async (_e, arg: number | { count?: number; role?: string } = 16) => {
@@ -1576,7 +1588,8 @@ function addBatch(draft: BatchDraft, targetAgent?: string): Batch[] {
     items: draft.items ?? [],
     status: 'queued',
     createdAt: Date.now(),
-    targetAgent: targetAgent || undefined
+    targetAgent: targetAgent || undefined,
+    note: draft.note
   }
   state.batches.push(b)
   report('batch', {

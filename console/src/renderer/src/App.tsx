@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Settings2, FolderOpen, RefreshCw, MessageCircle, Bug } from 'lucide-react'
 import type {
   RepoState, McpState, ActivityRun, ActivityEvent, Batch, BatchItem, Review, AiAgent, BackgroundPrefs
@@ -307,6 +307,10 @@ export default function App(): JSX.Element {
     </div>
   )
 
+  // Stable identity so the viewer's setOptions (and its cart-node recompute) only re-runs when the
+  // cart actually changes - not on every activity/state re-render that keeps the atlas mounted.
+  const draftRefs = useMemo(() => new Set(cart.map((i) => i.ref)), [cart])
+
   let body: JSX.Element
   if (!repo?.path) body = <div className="center-stage"><RepoPicker onChanged={setRepo} /></div>
   else if (!repo.hasDescriptor || !descriptorOk) body = <div className="center-stage"><DescriptorGate repo={repo} onChanged={setRepo} /></div>
@@ -314,7 +318,7 @@ export default function App(): JSX.Element {
     ? <AtlasView
         onAdd={addToCart}
         onRemove={removeFromCart}
-        draftRefs={new Set(cart.map((i) => i.ref))}
+        draftRefs={draftRefs}
         liveEnabled={!!repo?.descriptor?.data?.committedDbUrl}
       />
     : consoleBody
