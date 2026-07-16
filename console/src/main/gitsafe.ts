@@ -363,6 +363,31 @@ export async function upstreamState(repo: string, base: string, path: string): P
   return (await git(repo, ['diff', '--quiet', ref, '--', path])).code === 0 ? 'identical' : 'differs'
 }
 
+/** src/*.c|.cpp files a diverged local branch introduces vs origin/<base> that AREN'T already
+ *  landed upstream - the genuinely-unpublished matches a diverged clone should PR. Diffs the
+ *  merge-base..HEAD range (only this branch's own commits) and keeps files upstream lacks
+ *  ('absent'); drops 'identical' (already merged) and 'differs' (upstream has its own version -
+ *  superseded, never overwrite a landed match). A .c<->.cpp rename guard drops stale pre-rename
+ *  drafts (upstream has the sibling extension). This is what stops a checkout that has drifted
+ *  behind main from re-PRing already-merged work or reverting generated files. */
+export async function newSrcVsBase(repo: string, base: string): Promise<string[]> {
+  const ref = `origin/${base}`
+  if ((await git(repo, ['rev-parse', '--verify', '--quiet', ref])).code !== 0) return []
+  const d = await git(repo, ['diff', '--name-only', '--diff-filter=ACMR', `${ref}...HEAD`, '--', 'src'])
+  if (d.code !== 0) return []
+  const out: string[] = []
+  for (const line of d.out.split('\n')) {
+    const p = line.trim()
+    const m = /^(src\/.+)\.(c|cpp)$/.exec(p)
+    if (!m) continue
+    if ((await upstreamState(repo, base, p)) !== 'absent') continue // already landed or superseded
+    const sibling = `${m[1]}.${m[2] === 'c' ? 'cpp' : 'c'}` // this match may have landed under the other ext
+    if ((await git(repo, ['cat-file', '-e', `${ref}:${sibling}`])).code === 0) continue
+    out.push(p)
+  }
+  return out
+}
+
 /** Working-tree source files that are new or modified (porcelain), for per-agent attribution. */
 export async function changedSrcFiles(repo: string): Promise<string[]> {
   const map = await statusMap(repo)

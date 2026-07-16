@@ -25,8 +25,8 @@ import {
   mergeWorkBranch, discardWorkBranch, WORK_BRANCH,
   remoteSlug, defaultBranch, currentBranch,
   pushSubsetToBranch, changedSrcFiles,
-  isDirty, aheadBehind, unmergedAhead, fetchRemote, rebasePull, pushToBranch, gitUserName,
-  recentlyAddedSrc, fetchBase, upstreamState,
+  isDirty, aheadBehind, unmergedAhead, fetchRemote, rebasePull, gitUserName,
+  recentlyAddedSrc, fetchBase, upstreamState, newSrcVsBase,
   syncPreview, backupBeforeSync, syncToOrigin
 } from './gitsafe'
 import { ensurePullRequest, resolvePushTarget, type PushTarget } from './pullRequests'
@@ -2376,13 +2376,28 @@ ipcMain.handle('repo:pushWorkPr', async (): Promise<{ ok: boolean; url?: string;
   const token = secretsEnv().GITHUB_TOKEN || process.env.GITHUB_TOKEN
   if (!token) return { ok: false, error: 'not signed into GitHub - sign in from Settings first' }
   const base = await defaultBranch(repo)
+  // Refresh origin/<base> so we diff against CURRENT main, not a stale checkout. Without this a
+  // clone that has drifted behind main re-PRs work that already landed upstream - the giant
+  // stale-duplicate PR (its content is all merged, so merging it would only revert docs/db and
+  // un-match files). Then build the PR from origin/<base> + only the genuinely-new matches, the
+  // same way auto-push does (throwaway index in pushSubsetToBranch - the local branch is untouched).
+  await fetchBase(repo, base)
+  const files = await newSrcVsBase(repo, base)
+  if (!files.length) {
+    return { ok: false, error: `nothing to push - your local matches are already on ${base} upstream (Sync to catch up)` }
+  }
   const who = (await gitUserName(repo)).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'work'
   const branch = `tangos/${who}`
   // Push to the base repo if this account can, otherwise to its fork (created on demand), so a
   // contributor without collaborator access still opens a cross-repo PR instead of getting a 403.
   const target = await getPushTarget(gh, token)
   if (!target.ok || !target.slug) return { ok: false, error: target.error ?? 'could not resolve a push target' }
-  const pushed = await pushToBranch(repo, branch, target.slug, token)
+  const consoleVer = `${app.getVersion()}${app.isPackaged ? '' : '-dev'}`
+  const pushed = await pushSubsetToBranch(
+    repo, branch, base, files,
+    `tangos: matched work (${branch}) [tangOS Console v${consoleVer}]`,
+    target.slug, token
+  )
   if (!pushed.ok) return { ok: false, error: `push failed: ${pushed.err.slice(-160)}` }
   const pr = await ensurePullRequest({
     owner: gh.owner,
@@ -2392,7 +2407,7 @@ ipcMain.handle('repo:pushWorkPr', async (): Promise<{ ok: boolean; url?: string;
     token,
     headOwner: target.headOwner,
     title: `tangos: matched work (${branch})`,
-    body: `Matched functions pushed from tangOS Console${target.isFork ? ` (from fork \`${target.slug.owner}/${target.slug.repo}\`)` : ''}. Review + CI gate the merge.`
+    body: `${files.length} matched function${files.length === 1 ? '' : 's'} pushed from tangOS Console${target.isFork ? ` (from fork \`${target.slug.owner}/${target.slug.repo}\`)` : ''}. Review + CI gate the merge.`
   })
   if (!pr.ok) return { ok: false, error: `pushed to ${target.slug.owner}/${target.slug.repo}:${branch}, but PR failed: ${pr.error}` }
   return { ok: true, url: pr.url }
