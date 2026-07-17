@@ -110,25 +110,27 @@ export function paintFnLabels(
   ctx.globalAlpha = 1
 }
 
-/** Module name labels at constant screen size (parity with the classic Treemap), each with its
- *  function count in parentheses ("ov006 (321)"). Counted here at bake time - one pass over fns
- *  per bake, never per frame. */
+/** Group name labels at constant screen size (parity with the classic Treemap), each with its
+ *  function count in parentheses ("ov006 (321)", "andrewboudreau (94)"). Counted by group INDEX
+ *  (modIx), not by f.module - in the size/match/contributor layouts the groups are keyed by
+ *  bucket/contributor, so a module-name count read 0 for every header. One pass per bake. */
 export function paintModuleLabels(
   ctx: CanvasRenderingContext2D,
   world: World,
   v: PaintView,
   cam: Camera
 ): void {
-  const counts = new Map<string, number>()
-  for (const n of world.fns) counts.set(n.f.module, (counts.get(n.f.module) ?? 0) + 1)
+  const counts = new Array<number>(world.mods.length).fill(0)
+  for (const n of world.fns) if (n.modIx >= 0 && n.modIx < counts.length) counts[n.modIx]++
   ctx.font = LABEL_FONT
   ctx.lineJoin = 'round'
-  for (const m of world.mods) {
+  for (let i = 0; i < world.mods.length; i++) {
+    const m = world.mods[i]
     const wpx = m.w * cam.z
     const hpx = m.h * cam.z
     if (wpx <= 30 || hpx <= 12) continue
     const p = cam.worldToScreen(m.x, m.y)
-    const label = `${m.module} (${counts.get(m.module) ?? 0})`
+    const label = `${m.module} (${counts[i]})`
     ctx.lineWidth = 3
     ctx.strokeStyle = 'rgba(255,255,255,0.9)'
     ctx.strokeText(label, p.x + 4, p.y + 12, Math.max(20, wpx - 8))
