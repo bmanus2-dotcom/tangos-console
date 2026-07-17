@@ -7,6 +7,7 @@ export class InputController {
   private readonly detachFns: Array<() => void> = []
   private down = false
   private dragged = false
+  private marqueeing = false // right-button rubber-band in progress
   private downX = 0
   private downY = 0
   private lastX = 0
@@ -33,10 +34,16 @@ export class InputController {
     on('pointercancel', () => {
       this.down = false
       this.dragged = false
+      if (this.marqueeing) {
+        this.marqueeing = false
+        this.engine.marqueeCancel()
+      }
     })
     on('pointerleave', () => this.engine.pointerLeave())
     on('wheel', (e) => this.onWheel(e), { passive: false })
     on('keydown', (e) => this.onKey(e))
+    // Right-click is the marquee, never a menu.
+    on('contextmenu', (e) => e.preventDefault())
   }
 
   detach(): void {
@@ -50,6 +57,15 @@ export class InputController {
   }
 
   private onDown(e: PointerEvent): void {
+    if (e.button === 2) {
+      // Right button: start the rubber-band marquee. Ctrl = add to the existing selection.
+      this.canvas.focus()
+      const p = this.pos(e)
+      this.marqueeing = true
+      this.engine.marqueeStart(p.x, p.y, e.ctrlKey)
+      this.canvas.setPointerCapture(e.pointerId)
+      return
+    }
     if (e.button !== 0) return
     this.canvas.focus()
     const p = this.pos(e)
@@ -64,6 +80,10 @@ export class InputController {
 
   private onMove(e: PointerEvent): void {
     const p = this.pos(e)
+    if (this.marqueeing) {
+      this.engine.marqueeMove(p.x, p.y) // no hover while rubber-banding
+      return
+    }
     if (this.down) {
       if (!this.dragged && Math.hypot(p.x - this.downX, p.y - this.downY) > 4) this.dragged = true
       if (this.dragged) {
@@ -79,6 +99,12 @@ export class InputController {
   }
 
   private onUp(e: PointerEvent): void {
+    if (e.button === 2 && this.marqueeing) {
+      this.marqueeing = false
+      if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
+      this.engine.marqueeEnd()
+      return
+    }
     if (!this.down) return
     this.down = false
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)

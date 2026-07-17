@@ -14,6 +14,7 @@ export default function ChaosViewer({
   onModule,
   onFunction,
   onToggleCart,
+  onMarqueeSelect,
   selectedId,
   cartRefs,
   colorBy = 'status',
@@ -29,6 +30,7 @@ export default function ChaosViewer({
   onModule: (m: string | null) => void
   onFunction: (f: AtlasFunction) => void
   onToggleCart?: (f: AtlasFunction) => void
+  onMarqueeSelect?: (fns: AtlasFunction[], add: boolean) => void
   selectedId?: string
   cartRefs?: Set<string>
   colorBy?: 'status' | 'author'
@@ -42,8 +44,8 @@ export default function ChaosViewer({
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<ChaosEngine | null>(null)
-  const cbRef = useRef({ onModule, onFunction, onToggleCart })
-  cbRef.current = { onModule, onFunction, onToggleCart }
+  const cbRef = useRef({ onModule, onFunction, onToggleCart, onMarqueeSelect })
+  cbRef.current = { onModule, onFunction, onToggleCart, onMarqueeSelect }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -52,7 +54,8 @@ export default function ChaosViewer({
     const engine = new ChaosEngine(canvas, {
       onModule: (m) => cbRef.current.onModule(m),
       onFunction: (f) => cbRef.current.onFunction(f),
-      onToggleCart: (f) => cbRef.current.onToggleCart?.(f)
+      onToggleCart: (f) => cbRef.current.onToggleCart?.(f),
+      onMarqueeSelect: (fns, add) => cbRef.current.onMarqueeSelect?.(fns, add)
     })
     engineRef.current = engine
     const input = new InputController(canvas, engine)

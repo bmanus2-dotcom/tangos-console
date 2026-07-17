@@ -245,6 +245,11 @@ export default function App(): JSX.Element {
   function addToCart(item: BatchItem): void {
     setCart((c) => (c.some((i) => i.ref === item.ref) ? c : [...c, item]))
   }
+  /** Marquee replace: the box's picks BECOME the cart (deduped by ref - sibling thunks share names). */
+  function replaceCart(items: BatchItem[]): void {
+    const seen = new Set<string>()
+    setCart(items.filter((i) => (seen.has(i.ref) ? false : (seen.add(i.ref), true))))
+  }
   function removeFromCart(ref: string): void {
     setCart((c) => c.filter((i) => i.ref !== ref))
   }
@@ -322,6 +327,7 @@ export default function App(): JSX.Element {
     ? <AtlasView
         onAdd={addToCart}
         onRemove={removeFromCart}
+        onReplace={replaceCart}
         draftRefs={draftRefs}
         liveEnabled={!!repo?.descriptor?.data?.committedDbUrl}
       />

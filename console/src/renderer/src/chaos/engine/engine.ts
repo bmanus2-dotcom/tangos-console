@@ -24,6 +24,9 @@ export interface EngineCallbacks {
   onFunction: (f: AtlasFunction) => void
   // Space over the focused function while WASD-travelling: toggle it in the batch cart.
   onToggleCart: (f: AtlasFunction) => void
+  // Right-drag marquee finished: the functions fully inside the box. add=true (Ctrl held) means
+  // union with the existing selection; false means replace it.
+  onMarqueeSelect: (fns: AtlasFunction[], add: boolean) => void
 }
 
 export interface ViewOptions {
@@ -125,6 +128,8 @@ export class ChaosEngine {
   // Indices into world.fns of the functions currently in the batch cart, recomputed only when the
   // cart set or the world changes so the per-frame rainbow overlay is a cheap index walk.
   private cartNodes: number[] = []
+  // Right-drag rubber-band selection, in CSS/screen space while dragging (add = Ctrl held).
+  private marquee: { x0: number; y0: number; x1: number; y1: number; add: boolean } | null = null
   /** What the camera is currently flying toward - re-issued after a rebuild so
    *  panel reflows mid-flight can never strand the camera partway there. */
   private flightTarget: { kind: 'fn'; id: string } | { kind: 'mod'; name: string } | { kind: 'fit' } | null = null
@@ -344,6 +349,49 @@ export class ChaosEngine {
     if (!n) return false
     this.cb.onToggleCart(n.f)
     return true
+  }
+
+  // ---- right-drag marquee (rubber-band select into the batch cart) ------------------------------
+
+  marqueeStart(cssX: number, cssY: number, add: boolean): void {
+    this.marquee = { x0: cssX, y0: cssY, x1: cssX, y1: cssY, add }
+    this.bubble.hide(performance.now())
+    this.wake()
+  }
+
+  marqueeMove(cssX: number, cssY: number): void {
+    if (!this.marquee) return
+    this.marquee.x1 = cssX
+    this.marquee.y1 = cssY
+    this.wake()
+  }
+
+  marqueeCancel(): void {
+    this.marquee = null
+    this.wake()
+  }
+
+  /** Finish the drag: collect every function FULLY inside the box (clipping a neighbor's edge must
+   *  not grab it - treemap tiles are wall-to-wall) and hand them to the host. A sub-5px drag is a
+   *  plain right-click, not a selection - ignored. */
+  marqueeEnd(): void {
+    const m = this.marquee
+    this.marquee = null
+    this.wake()
+    if (!m || !this.world) return
+    if (Math.abs(m.x1 - m.x0) < 5 && Math.abs(m.y1 - m.y0) < 5) return
+    const a = this.cam.screenToWorld(Math.min(m.x0, m.x1), Math.min(m.y0, m.y1))
+    const b = this.cam.screenToWorld(Math.max(m.x0, m.x1), Math.max(m.y0, m.y1))
+    const rect = { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }
+    const out: number[] = []
+    this.world.query(rect, out)
+    const fns: AtlasFunction[] = []
+    for (const i of out) {
+      const n = this.world.fns[i]
+      if (n.x >= rect.x && n.y >= rect.y && n.x + n.w <= rect.x + rect.w && n.y + n.h <= rect.y + rect.h)
+        fns.push(n.f)
+    }
+    if (fns.length) this.cb.onMarqueeSelect(fns, m.add)
   }
 
   /** Refresh the cart-node index list from the current cart set + world. Cheap; runs only on cart or
@@ -684,12 +732,13 @@ export class ChaosEngine {
     this.drawCart(now)
     this.bubble.draw(ctx, this.cam, now)
     this.drawSelection(now)
+    this.drawMarquee()
     this.drawMinimap()
     this.emitFocus(settled, band)
     this.lastFrameMs = performance.now() - now
     if (window.chaosPerf) this.drawPerf()
     // keep frames coming only while something is alive; otherwise the loop sleeps
-    if (camMoving || !settled || this.bubble.needsFrame(now) || this.pendingBubble || this.travelAnim) {
+    if (camMoving || !settled || this.bubble.needsFrame(now) || this.pendingBubble || this.travelAnim || this.marquee) {
       this.wake()
     } else if (this.cartNodes.length) {
       // Only the rainbow overlay wants frames (camera's settled): it's a slow shimmer, so throttle to
@@ -900,6 +949,25 @@ export class ChaosEngine {
       ctx.stroke()
     }
     ctx.restore()
+  }
+
+  /** The right-drag rubber band: translucent fill + dashed theme-colored outline, screen space. */
+  private drawMarquee(): void {
+    const m = this.marquee
+    if (!m) return
+    const { ctx } = this
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    const x = Math.min(m.x0, m.x1)
+    const y = Math.min(m.y0, m.y1)
+    const w = Math.abs(m.x1 - m.x0)
+    const h = Math.abs(m.y1 - m.y0)
+    ctx.fillStyle = 'rgba(59,130,246,0.12)'
+    ctx.fillRect(x, y, w, h)
+    ctx.strokeStyle = getTheme(this.opts.themeId).colors.selection
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([6, 4])
+    ctx.strokeRect(x + 0.5, y + 0.5, w, h)
+    ctx.setLineDash([])
   }
 
   private drawPerf(): void {

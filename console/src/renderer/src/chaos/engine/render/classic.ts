@@ -110,13 +110,17 @@ export function paintFnLabels(
   ctx.globalAlpha = 1
 }
 
-/** Module name labels at constant screen size (parity with the classic Treemap). */
+/** Module name labels at constant screen size (parity with the classic Treemap), each with its
+ *  function count in parentheses ("ov006 (321)"). Counted here at bake time - one pass over fns
+ *  per bake, never per frame. */
 export function paintModuleLabels(
   ctx: CanvasRenderingContext2D,
   world: World,
   v: PaintView,
   cam: Camera
 ): void {
+  const counts = new Map<string, number>()
+  for (const n of world.fns) counts.set(n.f.module, (counts.get(n.f.module) ?? 0) + 1)
   ctx.font = LABEL_FONT
   ctx.lineJoin = 'round'
   for (const m of world.mods) {
@@ -124,10 +128,11 @@ export function paintModuleLabels(
     const hpx = m.h * cam.z
     if (wpx <= 30 || hpx <= 12) continue
     const p = cam.worldToScreen(m.x, m.y)
+    const label = `${m.module} (${counts.get(m.module) ?? 0})`
     ctx.lineWidth = 3
     ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-    ctx.strokeText(m.module, p.x + 4, p.y + 12, Math.max(20, wpx - 8))
+    ctx.strokeText(label, p.x + 4, p.y + 12, Math.max(20, wpx - 8))
     ctx.fillStyle = v.theme.colors.moduleStroke
-    ctx.fillText(m.module, p.x + 4, p.y + 12, Math.max(20, wpx - 8))
+    ctx.fillText(label, p.x + 4, p.y + 12, Math.max(20, wpx - 8))
   }
 }

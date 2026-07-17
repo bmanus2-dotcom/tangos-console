@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshCw, Search, Plus, Minus, X, Database, Cloud, HardDrive, Users, ExternalLink } from 'lucide-react'
+import { RefreshCw, Search, Plus, Minus, X, Database, Cloud, HardDrive, Users, ExternalLink, Maximize2, Minimize2 } from 'lucide-react'
 import type { AtlasDb, AtlasFunction, BatchItem, GithubCredits } from '../../../shared/types'
 import ChaosViewer from '../chaos/ChaosViewer'
 import type { LayoutMode } from '../chaos/types'
@@ -14,11 +14,13 @@ const PALETTE = [
 export default function AtlasView({
   onAdd,
   onRemove,
+  onReplace,
   draftRefs,
   liveEnabled
 }: {
   onAdd: (item: BatchItem) => void
   onRemove: (ref: string) => void
+  onReplace: (items: BatchItem[]) => void
   draftRefs: Set<string>
   liveEnabled: boolean
 }): JSX.Element {
@@ -35,6 +37,7 @@ export default function AtlasView({
   const [authorFilter, setAuthorFilter] = useState<string | null>(null)
   const [showNearMiss, setShowNearMiss] = useState(true)
   const [selectedFn, setSelectedFn] = useState<AtlasFunction | null>(null)
+  const [fullAtlas, setFullAtlas] = useState(false) // hide head + right rail: map fills the window
   const [gh, setGh] = useState<GithubCredits | null>(null)
   const [recentStems, setRecentStems] = useState<Set<string>>(new Set()) // fn names matched in last 24h
 
@@ -198,7 +201,7 @@ export default function AtlasView({
 
   const s = db.stats
   return (
-    <div className="atlas">
+    <div className={`atlas${fullAtlas ? ' full' : ''}`}>
       <div className="atlas-head aero-panel">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>Atlas</h2>
@@ -297,30 +300,30 @@ export default function AtlasView({
               srcPath: f.srcPath
             })
         }}
+        onMarqueeSelect={(fns, add) => {
+          // Right-drag box: unmatched functions inside become the cart; Ctrl adds to what's there.
+          const items = fns
+            .filter((f) => !f.matched)
+            .map((f) => ({
+              id: `${Date.now()}-${f.name}`,
+              ref: f.name,
+              label: f.module,
+              module: f.module,
+              addr: f.addr,
+              size: f.size,
+              srcPath: f.srcPath
+            }))
+          if (!items.length) return
+          if (add) items.forEach(onAdd)
+          else onReplace(items)
+        }}
         colorBy={colorBy}
-        onColorBy={pickColorBy}
         authorColors={authorColors}
         authorResolve={keyToLogin}
         authorFilter={authorFilter}
         showNearMiss={showNearMiss}
         layout={layoutMode}
       />
-      <div className="atlas-sortbar">
-        <div className="seg">
-          {(
-            [
-              ['ov', 'By ov'],
-              ['size', 'By size'],
-              ['match', 'By match'],
-              ['contributor', 'By contributor']
-            ] as Array<[LayoutMode, string]>
-          ).map(([m, label]) => (
-            <button key={m} className={layoutMode === m ? 'on' : ''} onClick={() => pickLayout(m)}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
       </div>
 
       <div className="atlas-right">
@@ -438,6 +441,45 @@ export default function AtlasView({
         })}
       </div>
       </div>
+      </div>
+
+      {/* Bottom bar: coloring on the left, layout in the middle, popout + fullscreen on the right.
+          Lives OUTSIDE atlas-body so the map's bottom edge sits flush with the right-hand list. */}
+      <div className="atlas-bottombar">
+        <div className="bb-left">
+          <div className="seg">
+            <button className={colorBy === 'status' ? 'on' : ''} onClick={() => pickColorBy('status')}>Status</button>
+            <button className={colorBy === 'author' ? 'on' : ''} onClick={() => pickColorBy('author')}>Contributor</button>
+          </div>
+        </div>
+        <div className="bb-center">
+          <div className="seg">
+            {(
+              [
+                ['ov', 'By ov'],
+                ['size', 'By size'],
+                ['match', 'By match'],
+                ['contributor', 'By contributor']
+              ] as Array<[LayoutMode, string]>
+            ).map(([m, label]) => (
+              <button key={m} className={layoutMode === m ? 'on' : ''} onClick={() => pickLayout(m)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="bb-right">
+          <button className="mini-btn" onClick={() => window.tangos.openModulePopout('*')} title="Open the Atlas in its own window">
+            <ExternalLink size={12} style={{ verticalAlign: -2 }} />
+          </button>
+          <button
+            className="mini-btn"
+            onClick={() => setFullAtlas((v) => !v)}
+            title={fullAtlas ? 'Exit fullscreen - bring back the stats and list' : 'Fullscreen - the map fills the window under the header'}
+          >
+            {fullAtlas ? <Minimize2 size={12} style={{ verticalAlign: -2 }} /> : <Maximize2 size={12} style={{ verticalAlign: -2 }} />}
+          </button>
+        </div>
       </div>
     </div>
   )
