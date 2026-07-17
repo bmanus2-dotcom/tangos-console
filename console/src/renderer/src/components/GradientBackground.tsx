@@ -187,7 +187,11 @@ function separate(list: Mover[], minD: number): void {
     }
 }
 
-// move a group: ease toward its motion path, keep spacing + on-screen (except scroll modes), then draw
+// move a group: ease toward its motion path, keep spacing + on-screen (except scroll modes), then draw.
+// Drawing is TRANSFORM-ONLY: left/top are layout properties, so writing them per frame forced a full
+// style-recalc + layout + paint 30x/s (will-change can't compositor-promote left/top). Positions are
+// tracked in % of the container and converted to px here (pw/ph = container size, cached by a
+// ResizeObserver), composed into one translate3d the compositor moves for free.
 function place(
   list: Mover[],
   mode: MotionMode,
@@ -195,7 +199,9 @@ function place(
   ds: number,
   minD: number,
   isBubble: boolean,
-  active: boolean
+  active: boolean,
+  pw: number,
+  ph: number
 ): void {
   const scroll = SCROLL.has(mode)
   if (active) {
@@ -219,19 +225,19 @@ function place(
   }
   for (const o of list) {
     if (!o.el) continue
-    o.el.style.left = o.rx + '%'
-    o.el.style.top = o.ry + '%'
-    const tf = isBubble ? `translate(-50%,-50%) rotate(${(o.rot ?? 0) * Math.sin(tt * o.fx * 0.5 + o.ph)}deg)` : null
-    if (tf) o.el.style.transform = tf
+    const x = (o.rx / 100) * pw
+    const y = (o.ry / 100) * ph
+    const rot = isBubble ? ` rotate(${(o.rot ?? 0) * Math.sin(tt * o.fx * 0.5 + o.ph)}deg)` : ''
+    o.el.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)${rot}`
     if (o.ghosts) {
       if (scroll) {
         const horiz = mode === 'leftright' || mode === 'rightleft'
         const offs = [-140, 140]
         o.ghosts.forEach((g, i) => {
           g.style.display = 'block'
-          g.style.left = o.rx + (horiz ? offs[i] : 0) + '%'
-          g.style.top = o.ry + (horiz ? 0 : offs[i]) + '%'
-          if (tf) g.style.transform = tf
+          const gx = x + (horiz ? (offs[i] / 100) * pw : 0)
+          const gy = y + (horiz ? 0 : (offs[i] / 100) * ph)
+          g.style.transform = `translate3d(${gx}px, ${gy}px, 0) translate(-50%, -50%)${rot}`
         })
       } else o.ghosts.forEach((g) => (g.style.display = 'none'))
     }
@@ -269,6 +275,10 @@ export default function GradientBackground({ palette }: { palette: string }): JS
       for (const e of [s.el, ...s.ghosts]) {
         e.style.setProperty('--c', s.color!)
         e.style.width = e.style.height = pal.size + 'vmax'
+        // Blur PER BLOB, not on the parent: a parent-level blur re-rasterizes the whole 130%-viewport
+        // layer every time any child moves (and forces every backdrop-filter panel above to re-blur).
+        // Per-element blur on a static gradient rasters once; transform moves just re-composite it.
+        e.style.filter = `blur(${pal.blur}px) saturate(1.15)`
       }
     }
     spaceHomes(stops, 32)
@@ -294,26 +304,40 @@ export default function GradientBackground({ palette }: { palette: string }): JS
     }
     spaceHomes(bubbles, 24)
 
-    // ---- apply palette look ----
-    gradientEl.style.filter = `blur(${pal.blur}px) saturate(1.15)`
+    // ---- container sizes (px) for the %->px transform conversion; refreshed on resize ----
+    let gw = gradientEl.clientWidth
+    let gh = gradientEl.clientHeight
+    let bw = bubblesEl.clientWidth
+    let bh = bubblesEl.clientHeight
+    const ro = new ResizeObserver(() => {
+      gw = gradientEl.clientWidth
+      gh = gradientEl.clientHeight
+      bw = bubblesEl.clientWidth
+      bh = bubblesEl.clientHeight
+    })
+    ro.observe(gradientEl)
+    ro.observe(bubblesEl)
 
     // ---- animation loop ----
     const reduced =
       typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     // draw the initial resting frame once (also the final frame for reduced-motion)
-    place(stops, pal.gradMotion, 0, 0, 15, false, false)
-    place(bubbles, pal.bubbleMotion, 0, 0, 10, true, false)
-    if (reduced) return
+    place(stops, pal.gradMotion, 0, 0, 15, false, false, gw, gh)
+    place(bubbles, pal.bubbleMotion, 0, 0, 10, true, false, bw, bh)
+    if (reduced) {
+      return () => ro.disconnect()
+    }
 
     let raf = 0
     let tGrad = 0
     let tBub = 0
     let last = performance.now()
-    // The blobs drift slowly, so 60fps on a blur-heavy layer is wasted CPU - cap to ~30fps. And skip
-    // the work entirely while the window is hidden/minimized OR just unfocused (alt-tabbed away): the
-    // compositor then keeps the last blurred frame static for free. rAF keeps ticking cheaply so it
-    // resumes the instant the window is looked at again.
+    // The blobs drift slowly, so 60fps is wasted CPU - cap to ~30fps. And skip the work entirely
+    // while the window is hidden/minimized OR just unfocused (alt-tabbed away): the compositor then
+    // keeps the last frame static for free. rAF keeps ticking cheaply so it resumes the instant the
+    // window is looked at again. With transform-only movement + per-blob blur, each live frame is
+    // compositor-only (no layout, no blur re-raster).
     const FRAME_MS = 1000 / 30
     const frame = (now: number): void => {
       raf = requestAnimationFrame(frame)
@@ -326,11 +350,14 @@ export default function GradientBackground({ palette }: { palette: string }): JS
       last = now
       tGrad += dt * gradSpeed
       tBub += dt * bubbleSpeed
-      place(stops, pal.gradMotion, tGrad, dt * gradSpeed, 15, false, true)
-      place(bubbles, pal.bubbleMotion, tBub, dt * bubbleSpeed, 10, true, true)
+      place(stops, pal.gradMotion, tGrad, dt * gradSpeed, 15, false, true, gw, gh)
+      place(bubbles, pal.bubbleMotion, tBub, dt * bubbleSpeed, 10, true, true, bw, bh)
     }
     raf = requestAnimationFrame(frame)
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
   }, [palette])
 
   return (

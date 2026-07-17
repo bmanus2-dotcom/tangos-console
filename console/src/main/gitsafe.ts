@@ -235,7 +235,10 @@ export async function rebasePull(
   const unmerged = (await git(repo, ['ls-files', '--unmerged'])).out.trim()
   if (unmerged) {
     const paths = [...new Set(unmerged.split('\n').map((l) => l.split('\t').pop()).filter(Boolean))]
-    for (const p of paths) await git(repo, ['checkout', 'HEAD', '--', p as string])
+    // `reset -- <p>` clears the unmerged INDEX entries without touching the working tree (a
+    // `checkout HEAD -- <p>` here would clobber any hand-edit made to the conflicted file). The
+    // worktree content then rides the rebase's --autostash below as a normal modification.
+    for (const p of paths) await git(repo, ['reset', '-q', '--', p as string])
   }
 
   // Find untracked files that collide with a path arriving from upstream (those block the checkout).
@@ -268,24 +271,38 @@ export async function rebasePull(
     }
   }
 
-  const restore = (): void => {
+  // Put every moved file back exactly where it was. The backup dir is deleted ONLY when every
+  // rename-back succeeded - on Windows a destination can be held by AV/an editor/an agent process,
+  // and deleting the backup after a failed restore was a permanent-loss path for the very files
+  // this mechanism exists to protect. Returns the paths it could NOT restore (still in the backup).
+  const restore = (): string[] => {
+    const failed: string[] = []
     for (const m of moved) {
       try {
         mkdirSync(dirname(join(repo, m.path)), { recursive: true })
         renameSync(join(backupRoot, m.path), join(repo, m.path))
       } catch {
-        /* best-effort */
+        failed.push(m.path)
       }
     }
-    try { rmSync(backupRoot, { recursive: true, force: true }) } catch { /* ignore */ }
+    if (failed.length === 0) {
+      try { rmSync(backupRoot, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
+    return failed
   }
 
   report('Applying the update', 75)
   const r = await git(repo, ['rebase', '--autostash', ref])
   if (r.code !== 0) {
     await git(repo, ['rebase', '--abort'])
-    restore() // put every moved file back exactly where it was; nothing lost
-    return { ok: false, err: (r.err || r.out).trim() || 'rebase failed (conflict)' }
+    const failed = restore()
+    const base = (r.err || r.out).trim() || 'rebase failed (conflict)'
+    return {
+      ok: false,
+      err: failed.length
+        ? `${base}\n${failed.length} set-aside file${failed.length === 1 ? '' : 's'} could not be moved back (still safe in ${backupRoot}): ${failed.join(', ')}`
+        : base
+    }
   }
 
   // Rebase landed. Identical backups are pure dups of what upstream just checked out -> discard.
@@ -321,6 +338,16 @@ export async function defaultBranch(repo: string): Promise<string> {
  *  it creates the branch on the first push and fast-forwards it on later ones. (--force-with-lease
  *  is unusable here - there's no remote-tracking ref for an ad-hoc URL push, so it rejects the
  *  very first create.) On a non-ff (rare), fall back to a force push of the session branch. */
+/** Strip the token-authenticated URL out of git's output before it goes ANYWHERE user-visible.
+ *  On a failed push, git echoes the full push URL (with the embedded token) into stderr, and that
+ *  string was riding into the UI status chip, debug dumps, and shared bug reports - a credential
+ *  leak. Scrub both the generic credential-in-URL shape and the literal token, at the source. */
+export function scrubToken(s: string, token?: string): string {
+  let out = s.replace(/x-access-token:[^@\s]+@/g, 'x-access-token:***@')
+  if (token) out = out.split(token).join('***')
+  return out
+}
+
 export async function pushToBranch(
   repo: string,
   remoteBranch: string,
@@ -333,7 +360,7 @@ export async function pushToBranch(
   if (r.code !== 0 && /\bnon-fast-forward\b|\brejected\b/i.test(r.err || r.out)) {
     r = await git(repo, ['push', '--force', url, spec]) // session-owned branch: safe to force
   }
-  return { ok: r.code === 0, err: (r.err || r.out).trim() }
+  return { ok: r.code === 0, err: scrubToken((r.err || r.out).trim(), token) }
 }
 
 /** Merge the work branch into base (no-ff) and delete it. Leaves you on base. */
@@ -443,7 +470,7 @@ export async function pushSubsetToBranch(
     if (up.code !== 0) return { ok: false, err: `update-ref: ${up.err.trim()}` }
     const url = `https://x-access-token:${token}@github.com/${slug.owner}/${slug.repo}.git`
     const push = await git(repo, ['push', '--force', url, `refs/heads/${branch}:refs/heads/${branch}`])
-    return { ok: push.code === 0, err: (push.err || push.out).trim() }
+    return { ok: push.code === 0, err: scrubToken((push.err || push.out).trim(), token) }
   } finally {
     try {
       unlinkSync(idxFile)

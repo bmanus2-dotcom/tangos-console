@@ -110,6 +110,7 @@ function serializeGen<T>(fn: () => Promise<T>): Promise<T> {
 // flag, and the scheduler's streamed output tail, so the UI's overlay can offer Cancel and a
 // peek at what the scheduler is actually doing instead of a black-box spinner.
 const genLive = { kill: null as (() => void) | null, cancelled: false, tail: '' }
+let genOutTimer: NodeJS.Timeout | null = null // throttles gen:output sends to ~4/s (see genDraft)
 
 // Auto-push: when Writes AND Review are both on, matched work is committed to the work branch,
 // pushed to a per-session remote branch, and surfaced as ONE rolling PR (the repo's PR rules /
@@ -226,7 +227,14 @@ async function runAutoPush(slug: string): Promise<void> {
     clearTimeout(t)
     autoPushTimers.delete(slug)
   }
-  if (autoPushBusy.has(slug) || !autoPushActive() || !state.repoPath) return
+  if (autoPushBusy.has(slug)) {
+    // A push for this agent is mid-flight (they routinely outlast the 20s debounce). A plain return
+    // here silently stranded whatever landed in pendingByAgent during the flight - no timer, no
+    // retry, the PR never got the burst's last match. Reschedule instead of dropping.
+    scheduleAutoPush(slug)
+    return
+  }
+  if (!autoPushActive() || !state.repoPath) return
   const files = [...(pendingByAgent.get(slug) ?? [])]
   if (!files.length) return
   autoPushBusy.add(slug)
@@ -456,27 +464,38 @@ function afterRun(
 const LOOP_QUEUE_DEPTH = 2
 // One scheduler run in flight per agent - the heavy coddog runs must never overlap.
 const loopReassigning = new Set<string>()
+// After a failed generation, don't auto-retry until this timestamp - a permanently-failing scheduler
+// (dry pool, broken setup) must NOT spin back-to-back corpus ranks forever. The next natural trigger
+// (pull/poll/completion) after the cooldown re-attempts.
+const loopGenCooldownUntil = new Map<string, number>()
+const LOOP_GEN_COOLDOWN_MS = 2 * 60_000
 
 function openLoopBatches(agentName: string): number {
   return state.batches.filter((b) => b.targetAgent === agentName && b.status !== 'done').length
 }
 
 /** Top the agent's queue back up to LOOP_QUEUE_DEPTH, one scheduler run at a time, chaining on
- *  completion until it's full - so filling from empty, and a pull that frees a slot, both converge.
- *  No-ops for console-driven agents, a stopped agent, an already-full queue, or a run in flight. */
+ *  SUCCESS until it's full - so filling from empty, and a pull that frees a slot, both converge.
+ *  A failure sets a cooldown instead of chaining (no infinite retry). No-ops for console-driven
+ *  agents, a stopped agent, an already-full queue, or a run in flight. */
 function ensureLoopQueue(agentName: string): void {
   if (!agentLoop.has(agentName) || isConsoleDrivable(agentName)) return
   if (loopReassigning.has(agentName)) return // a run is already in flight; its finally re-checks depth
+  if ((loopGenCooldownUntil.get(agentName) ?? 0) > Date.now()) return // recent failure - back off
   if (openLoopBatches(agentName) >= LOOP_QUEUE_DEPTH) return
   loopReassigning.add(agentName)
   const role = agentRoles[agentName]?.[0]
+  let failed = false
   void assignToAgent(agentName, role ?? 'Unassigned', roleBatchSize(role), true)
-    .catch((e) =>
+    .then(() => loopGenCooldownUntil.delete(agentName))
+    .catch((e) => {
+      failed = true
+      loopGenCooldownUntil.set(agentName, Date.now() + LOOP_GEN_COOLDOWN_MS)
       report('batch', { event: 'loop-reassign-failed', agent: agentName, error: String((e as Error)?.message ?? e) })
-    )
+    })
     .finally(() => {
       loopReassigning.delete(agentName)
-      ensureLoopQueue(agentName) // still short (filling 0->2, or a pull emptied a slot)? make the next
+      if (!failed) ensureLoopQueue(agentName) // still short (filling 0->2)? make the next
     })
 }
 
@@ -508,6 +527,16 @@ function kickLoopReassign(agentName: string): void {
   if (!agentLoop.has(agentName)) return
   const active = state.batches.find((b) => b.status === 'active' && b.targetAgent === agentName)
   if (!active) return
+  // Churn guard: a batch that's young AND untouched isn't "stuck" - the agent just re-polled without
+  // working yet (post-summary re-poll, double poll). Retiring it here burned a full scheduler run
+  // every ~80s (the worked:0 retire storm in the reports). Top the queue up instead and let the
+  // agent's next pull retire the abandoned active naturally.
+  const age = Date.now() - (active.activatedAt ?? active.createdAt)
+  const worked = active.items.filter((i) => i.worked || i.done).length
+  if (worked === 0 && age < 3 * 60_000) {
+    ensureLoopQueue(agentName)
+    return
+  }
   active.status = 'done'
   report('batch', {
     event: 'loop-retire-stuck',
@@ -560,6 +589,7 @@ function pullNextBatch(agentName?: string): Batch | null {
   for (const b of state.batches) if (b.status === 'active' && mine(b)) b.status = 'done'
   const batch = state.batches[idx]
   batch.status = 'active'
+  batch.activatedAt = Date.now()
   if (agentName) {
     const done = batch.items.filter((i) => i.done).length
     aiStats.setCurrent(agentName, {
@@ -711,10 +741,18 @@ mcp.onRolesAssigned = (name, roles) => {
   else delete agentRoles[name]
   saveSettings()
 }
-// Per-AI stats changed: refresh the UI now, persist (debounced) so lifetime totals survive.
+// Per-AI stats changed: refresh the UI (debounced ~250ms - during a hot drive, stats tick on every
+// streamed target, and every un-debounced push serialized the FULL state over IPC), and persist
+// (longer debounce) so lifetime totals survive.
+let statsPushTimer: NodeJS.Timeout | null = null
 let statsTimer: NodeJS.Timeout | null = null
 aiStats.onChange = () => {
-  pushState()
+  if (!statsPushTimer) {
+    statsPushTimer = setTimeout(() => {
+      statsPushTimer = null
+      pushState()
+    }, 250)
+  }
   if (statsTimer) return
   statsTimer = setTimeout(() => {
     statsTimer = null
@@ -1378,7 +1416,14 @@ async function genDraft(role: string | undefined, count: number): Promise<BatchD
       // details") so a long corpus rank isn't a black box.
       onOutput: (chunk) => {
         genLive.tail = (genLive.tail + chunk).slice(-4000)
-        mainWindow?.webContents.send('gen:output', genLive.tail)
+        // Throttle to ~4/s: the scheduler chatters for up to 5 minutes, and every send re-rendered
+        // the whole Controller - even with the gen log closed.
+        if (!genOutTimer) {
+          genOutTimer = setTimeout(() => {
+            genOutTimer = null
+            mainWindow?.webContents.send('gen:output', genLive.tail)
+          }, 250)
+        }
       }
     })
   } finally {
@@ -1616,6 +1661,7 @@ function addBatch(draft: BatchDraft, targetAgent?: string): Batch[] {
     note: draft.note
   }
   state.batches.push(b)
+  pruneDoneBatches()
   report('batch', {
     event: 'created',
     batchId: b.id,
@@ -1627,6 +1673,25 @@ function addBatch(draft: BatchDraft, targetAgent?: string): Batch[] {
   pushState()
   notifyBatchWaiters() // wake any agent long-polling next_batch for this work
   return state.batches
+}
+
+// Long-running sessions (infinite loops make a 16-item batch per cycle, forever) used to grow
+// state.batches without bound - and the FULL array serializes to the renderer on every pushState,
+// while markItemWorked/Done scan all of it per match. Keep a bounded tail of done batches for the
+// UI/history and drop the oldest, releasing their preserved coddog rows (enrichedRows holds tens of
+// KB of disasm/context per target) unless the same function reappears in a still-open batch.
+const DONE_BATCHES_KEPT = 30
+function pruneDoneBatches(): void {
+  const done = state.batches.filter((b) => b.status === 'done')
+  if (done.length <= DONE_BATCHES_KEPT) return
+  const drop = new Set(done.slice(0, done.length - DONE_BATCHES_KEPT).map((b) => b.id))
+  const dropped = state.batches.filter((b) => drop.has(b.id))
+  state.batches = state.batches.filter((b) => !drop.has(b.id))
+  const stillOpen = new Set(
+    state.batches.filter((b) => b.status !== 'done').flatMap((b) => b.items.map((i) => i.ref))
+  )
+  for (const b of dropped)
+    for (const it of b.items) if (!stillOpen.has(it.ref)) enrichedRows.delete(it.ref)
 }
 
 ipcMain.handle('batch:enqueue', (_e, draft: BatchDraft) => addBatch(draft))
@@ -1670,6 +1735,10 @@ ipcMain.handle('ai:stop', (_e, agentName: string) => {
   agentLoop.delete(agentName) // stop any continuous loop from re-assigning
   driveStopRequested.add(agentName) // end the queue walk after the current batch is killed below
   driveKills.get(agentName)?.() // kill an in-flight driver early; matches found so far are kept
+  // Drop the pre-generated spare(s) too: the loop queue keeps LOOP_QUEUE_DEPTH batches buffered, and
+  // without this an MCP agent pulls and works one MORE full batch after Stop - contradicting the
+  // handler's own contract. Their functions become assignable again (the taken-set frees up).
+  state.batches = state.batches.filter((b) => !(b.targetAgent === agentName && b.status === 'queued'))
   pushState()
   return true
 })
@@ -2072,6 +2141,9 @@ async function startDriveLoop(agentName: string): Promise<void> {
         const primary = agentRoles[agentName]?.[0]
         await assignToAgent(agentName, primary ?? 'Unassigned', roleBatchSize(primary), true)
       }
+      // Re-check AFTER the (minutes-long) generation: a Stop pressed while the scheduler ran used to
+      // slip through here and drive the entire fresh batch end-to-end (paid API calls) anyway.
+      if (driveStopRequested.has(agentName)) break
       await driveBatch(agentName)
       if (driveStopRequested.has(agentName)) break
     }

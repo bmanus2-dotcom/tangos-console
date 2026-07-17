@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { X, FolderOpen, ChevronRight, Copy, Check } from 'lucide-react'
 import type { AiAgent, ActivityRun } from '../../../shared/types'
 import { aiColor } from '../aiColor'
@@ -94,6 +94,13 @@ export default function AiDetail({
   const latest = running ?? mine[0]
   const [openRun, setOpenRun] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // Scroll the live pane in an effect keyed on output length - the old inline ref callback forced a
+  // synchronous layout of a potentially huge <pre> on EVERY render (each streamed chunk).
+  const liveRef = useRef<HTMLPreElement>(null)
+  useEffect(() => {
+    const el = liveRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [latest?.output?.length])
   function copyLive(): void {
     if (!latest?.output) return
     void window.tangos.copy(latest.output)
@@ -211,7 +218,7 @@ export default function AiDetail({
                 {copied ? 'Copied' : 'Copy'}
               </button>
             </div>
-            <pre className="aid-live aero-scroll" ref={(el) => el && (el.scrollTop = el.scrollHeight)}>
+            <pre className="aid-live aero-scroll" ref={liveRef}>
               {latest.output || (running ? '(starting…)' : '(no output)')}
             </pre>
           </>

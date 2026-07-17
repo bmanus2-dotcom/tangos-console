@@ -26,7 +26,9 @@ function runName(r: ActivityRun): string {
   return r.source === 'ai' ? r.client?.name ?? 'AI' : 'You'
 }
 function lastLine(s: string): string {
-  const t = s.trimEnd()
+  // Work on a small tail slice: trimEnd() copies the WHOLE string, and this runs per agent per
+  // render against outputs that reach 200KB - megabytes of copying just to show 90 chars.
+  const t = s.slice(-400).trimEnd()
   const nl = t.lastIndexOf('\n')
   return (nl >= 0 ? t.slice(nl + 1) : t).slice(0, 90)
 }

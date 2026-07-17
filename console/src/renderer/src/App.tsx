@@ -198,7 +198,11 @@ export default function App(): JSX.Element {
         return [...next, ev.run]
       }
       if (ev.kind === 'run-output')
-        return prev.map((r) => (r.runId === ev.runId ? { ...r, output: r.output + ev.chunk } : r))
+        // Cap the live copy like the main-process bus does (200k): an unbounded string means every
+        // append copies the whole thing - O(n^2) growth and GC churn over a long drive.
+        return prev.map((r) =>
+          r.runId === ev.runId ? { ...r, output: (r.output + ev.chunk).slice(-200_000) } : r
+        )
       if (ev.kind === 'run-finished')
         return prev.map((r) =>
           r.runId === ev.runId ? { ...r, status: ev.status, exitCode: ev.exitCode, finishedAt: ev.finishedAt } : r

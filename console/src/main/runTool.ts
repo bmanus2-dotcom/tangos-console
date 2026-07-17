@@ -106,9 +106,25 @@ export function runTool(opts: RunOptions): Promise<RunResult> {
 
   return new Promise<RunResult>((resolve) => {
     let acc = ''
+    // Coalesce run-output events: a chatty tool emits tens of stdout chunks per second, and every
+    // published chunk was one IPC hop plus a full renderer re-render. Buffer and flush at most every
+    // ~100ms (with a final flush at close). opts.onOutput stays per-chunk - the drive loop parses
+    // its stream line-by-line live and must not be delayed.
+    let outBuf = ''
+    let outStream: 'stdout' | 'stderr' = 'stdout'
+    let outTimer: ReturnType<typeof setTimeout> | null = null
+    const flushOut = (): void => {
+      if (outTimer) clearTimeout(outTimer)
+      outTimer = null
+      if (!outBuf) return
+      activityBus.publish({ kind: 'run-output', runId, chunk: outBuf, stream: outStream })
+      outBuf = ''
+    }
     const push = (chunk: string, stream: 'stdout' | 'stderr') => {
       acc += chunk
-      activityBus.publish({ kind: 'run-output', runId, chunk, stream })
+      outBuf += chunk
+      outStream = stream
+      if (!outTimer) outTimer = setTimeout(flushOut, 100)
       opts.onOutput?.(chunk, stream)
     }
 
@@ -127,6 +143,7 @@ export function runTool(opts: RunOptions): Promise<RunResult> {
     } catch (e) {
       const msg = `failed to spawn: ${(e as Error).message}\n`
       push(msg, 'stderr')
+      flushOut() // deliver the buffered error before the finish event
       activityBus.publish({ kind: 'run-finished', runId, status: 'error', exitCode: null, finishedAt: Date.now() })
       resolve({ runId, status: 'error', exitCode: null, output: acc })
       return
@@ -140,6 +157,7 @@ export function runTool(opts: RunOptions): Promise<RunResult> {
     child.stderr?.on('data', (d) => push(d.toString(), 'stderr'))
     child.on('error', (e) => push(`process error: ${e.message}\n`, 'stderr'))
     child.on('close', (code) => {
+      flushOut() // deliver any tail buffered inside the 100ms window before the finish event
       const status: RunStatus = code === 0 ? 'ok' : 'error'
       activityBus.publish({ kind: 'run-finished', runId, status, exitCode: code, finishedAt: Date.now() })
       resolve({ runId, status, exitCode: code, output: acc })

@@ -292,6 +292,7 @@ export interface Batch {
   createdAt: number
   targetAgent?: string // addressed to one AI by name; only that AI's next_batch/drive gets it
   note?: string // operator-facing warning shown on the box (e.g. landed short - clone behind)
+  activatedAt?: number // when it went active (guards the stuck-batch retire against churn)
 }
 
 /** A batch draft composed in the UI before it is enqueued. */
