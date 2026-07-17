@@ -8,7 +8,7 @@ export interface UpdateNote {
  *  user opens him and reads it; the id is remembered in settings so each note
  *  only nags once. For the next release: bump the id and rewrite the body. */
 export const UPDATE_NOTE: UpdateNote = {
-  id: 'atlas-marquee-2026-07',
+  id: 'stranded-sweep-2026-07',
   title: 'New update!',
-  body: 'Atlas upgrades: right-drag to box-select functions (Ctrl adds), fullscreen + popout buttons, and module counts.'
+  body: 'The console now finds verified matches an agent left unpushed and PRs them for you.'
 }

@@ -352,6 +352,119 @@ async function runAutoPush(slug: string): Promise<void> {
   }
 }
 
+// ---- Stranded-match sweep ----------------------------------------------------------------------
+// Agents sometimes verify a match locally and never land it - the session ends, the PR never opens,
+// and the file sits in src/ as baseline dirt no flush will ever touch (it happened twice in two
+// days; five verified matches were only found by hand-diffing the tree). On startup / repo load,
+// re-verify the dirty src candidates against the ROM. Verified files are claimed under the
+// 'recovered' slug and fed to the normal auto-push pipeline; with push off, the status chip says
+// what was found instead. The baselineDirtySrc gate is deliberately bypassed for these: stranded
+// files ARE baseline dirt, and per-file ROM verification is a stronger junk filter than the gate.
+const SWEEP_CAP = 12 // compile runs per sweep - keeps startup cheap even on a messy tree
+let sweepTimer: NodeJS.Timeout | null = null
+let sweepRunning = false
+
+function scheduleStrandedSweep(delayMs = 20_000): void {
+  if (sweepTimer) clearTimeout(sweepTimer)
+  sweepTimer = setTimeout(() => {
+    sweepTimer = null
+    void runStrandedSweep().catch(() => {})
+  }, delayMs)
+}
+
+async function runStrandedSweep(): Promise<void> {
+  if (sweepRunning) return
+  const repo = state.repoPath
+  const matchTool = state.descriptor?.tools.find((t) => t.id === 'match')
+  if (!repo || !matchTool || !(await isGitRepo(repo))) return
+  sweepRunning = true
+  try {
+    const dirty = (await changedSrcFiles(repo)).filter((f) => /^src\/[^/]+\.(c|cpp)$/.test(f))
+    if (!dirty.length) return
+    const base = await defaultBranch(repo)
+    await fetchBase(repo, base)
+    // Candidates: new files, or local rewrites of an upstream NONMATCHING (a possible upgrade).
+    // 'identical' and differs-vs-a-real-upstream-match are not ours to rescue.
+    const candidates: string[] = []
+    for (const f of dirty) {
+      const up = await upstreamState(repo, base, f)
+      if (up === 'identical') continue
+      if (up === 'differs' && !(await upstreamIsNonmatching(repo, base, f))) continue
+      candidates.push(f)
+    }
+    if (!candidates.length) return
+    // addr/size/module come from the repo's committed chaos-db (name-keyed); no db, no sweep.
+    let meta: Map<string, { module?: string; addr?: number; size?: number }>
+    try {
+      const db = JSON.parse(readFileSync(join(repo, 'chaos-db.json'), 'utf8')) as AtlasDb
+      meta = new Map(
+        db.functions.map((fn) => [
+          fn.name,
+          { module: fn.module, addr: typeof fn.addr === 'string' ? parseInt(fn.addr, 16) : fn.addr, size: fn.size }
+        ])
+      )
+    } catch {
+      return
+    }
+    const verified: string[] = []
+    let checked = 0
+    for (const f of candidates) {
+      if (checked >= SWEEP_CAP) {
+        report('strandedSweep', { event: 'capped', checked, skipped: candidates.length - checked })
+        break
+      }
+      const func = f.replace(/^src\//, '').replace(/\.(c|cpp)$/, '')
+      const m = meta.get(func)
+      if (!m?.addr || !m?.size) continue
+      checked++
+      // Direct runTool (the genDraft pattern): visible in the activity feed, but skips afterRun so
+      // sweep verifications never pollute agent stats or batch bookkeeping.
+      const res = await runTool({
+        tool: matchTool,
+        values: {
+          c: f,
+          func,
+          addr: `0x${m.addr.toString(16)}`,
+          size: `0x${m.size.toString(16)}`,
+          module: m.module,
+          brief: true
+        },
+        runtime: currentRuntime(),
+        repoPath: repo,
+        source: 'user',
+        allowMutations: true, // match is read-only; this just skips the safe-mode wrap
+        extraEnv: secretsEnv()
+      })
+      if (res.status === 'ok' && outputIsMatch(res.output)) verified.push(f)
+    }
+    if (!verified.length) return
+    report('strandedSweep', { event: 'found', files: verified })
+    if (autoPushActive()) {
+      const mine = pendingByAgent.get('recovered') ?? new Set<string>()
+      for (const f of verified) {
+        baselineDirtySrc.delete(f) // it's verified work now, not ambient dirt
+        if (!claimedFiles.has(f)) claimedFiles.set(f, 'recovered')
+        if (claimedFiles.get(f) === 'recovered') {
+          mine.add(f)
+          snapshotVerified(repo, f)
+        }
+      }
+      pendingByAgent.set('recovered', mine)
+      if (mine.size) scheduleAutoPush('recovered')
+    } else {
+      const names = verified.map((f) => f.replace(/^src\//, '')).join(', ')
+      autoPushStatus = {
+        state: 'skipped',
+        message: `stranded sweep: ${verified.length} verified match${verified.length === 1 ? '' : 'es'} sitting unpushed in src/ (${names}) - turn on Writes + Review + Push to auto-PR, or push them yourself`,
+        at: Date.now()
+      }
+      pushState()
+    }
+  } finally {
+    sweepRunning = false
+  }
+}
+
 /**
  * Run a tool, wrapping mutating runs in safe-mode git handling when enabled:
  * isolate on the tangos/work branch, commit what changed, and record a review.
@@ -1118,6 +1231,9 @@ function setRepo(path: string | null): RepoState {
   // Watch the new repo's tangos.json so on-disk edits hot-reload.
   watchDescriptor(state.repoPath)
   if (state.repoPath) saveSettings()
+  // Rescue pass for verified-but-never-pushed matches from dead agent sessions (runs ~20s after
+  // load so startup stays snappy; covers app launch AND repo switches since both come through here).
+  if (state.repoPath) scheduleStrandedSweep()
   pushState()
   return repoState()
 }
