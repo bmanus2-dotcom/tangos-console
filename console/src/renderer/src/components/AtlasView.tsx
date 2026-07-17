@@ -39,11 +39,24 @@ export default function AtlasView({
   const [selectedFn, setSelectedFn] = useState<AtlasFunction | null>(null)
   const [fullAtlas, setFullAtlas] = useState(false) // hide head + right rail: map fills the window
   const [gh, setGh] = useState<GithubCredits | null>(null)
+  // Shared contributor colors (login->hex, committed to the repo so everyone sees the same) and
+  // which legend entry is YOURS (the signed-in GitHub login - only that one gets a picker).
+  const [sharedColors, setSharedColors] = useState<Record<string, string>>({})
+  const [myLogin, setMyLogin] = useState<string | null>(null)
+  const [colorErr, setColorErr] = useState<string | null>(null)
   const [recentStems, setRecentStems] = useState<Set<string>>(new Set()) // fn names matched in last 24h
 
   useEffect(() => {
     window.tangos.githubCredits().then(setGh).catch(() => {})
     let alive = true
+    window.tangos
+      .contributorColors()
+      .then((r) => {
+        if (!alive) return
+        setSharedColors(r.colors)
+        setMyLogin(r.you)
+      })
+      .catch(() => {})
     // functions matched (src added to origin/main) in the last 24h - drives the green ▲ per contributor
     window.tangos.recentAdds(24).then((s) => alive && setRecentStems(new Set(s))).catch(() => {})
     window.tangos
@@ -57,6 +70,26 @@ export default function AtlasView({
       alive = false
     }
   }, [])
+
+  // Pick YOUR color: recolor locally right away, then save debounced (the color input fires per
+  // drag tick - one commit per pick, not per tick). On failure, refetch truth and say why.
+  const colorSaveTimer = useRef<number | null>(null)
+  function pickMyColor(hex: string): void {
+    if (!myLogin) return
+    const login = myLogin
+    setSharedColors((c) => ({ ...c, [login]: hex }))
+    if (colorSaveTimer.current) window.clearTimeout(colorSaveTimer.current)
+    colorSaveTimer.current = window.setTimeout(() => {
+      void window.tangos.setContributorColor(hex).then((r) => {
+        if (r.ok && r.colors) setSharedColors(r.colors)
+        else if (!r.ok) {
+          setColorErr(r.error ?? 'could not save your color')
+          window.setTimeout(() => setColorErr(null), 6000)
+          window.tangos.contributorColors().then((x) => setSharedColors(x.colors)).catch(() => {})
+        }
+      })
+    }, 800)
+  }
 
   const pickColorBy = (c: 'status' | 'author'): void => {
     setColorBy(c)
@@ -99,8 +132,14 @@ export default function AtlasView({
   const authorColors = useMemo(() => {
     const out = new Map<string, string>()
     ;[...loginCounts.entries()].sort((a, b) => b[1] - a[1]).forEach(([name], i) => out.set(name, PALETTE[i % PALETTE.length]))
+    // Shared repo-committed picks override the generated palette (case-insensitive on login).
+    const shared = new Map(Object.entries(sharedColors).map(([k, v]) => [k.toLowerCase(), v]))
+    for (const name of out.keys()) {
+      const pick = shared.get(name.toLowerCase())
+      if (pick) out.set(name, pick)
+    }
     return out
-  }, [loginCounts])
+  }, [loginCounts, sharedColors])
 
   async function load(src: 'local' | 'live', force = false): Promise<void> {
     setLoading(true)
@@ -244,21 +283,32 @@ export default function AtlasView({
           <div className="contributors aero-scroll">
             <Users size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--aero-muted)', flex: 'none' }} />
             {contributors.map(([name, n]) => (
-              <button
-                key={name}
-                className={`contrib${authorFilter === name ? ' sel' : ''}`}
-                onClick={() => setAuthorFilter(authorFilter === name ? null : name)}
-                title={authorFilter === name ? 'show everyone' : `show only ${name}`}
-              >
-                <span className="cdot" style={{ background: authorColors.get(name) ?? '#8896a5' }} />
-                {name} <b>{n.toLocaleString()}</b>
-                {(recentByLogin.get(name) ?? 0) > 0 && (
-                  <span className="contrib-recent" title={`${recentByLogin.get(name)} matched in the last 24h`}>
-                    ▲{recentByLogin.get(name)}
-                  </span>
+              <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flex: 'none' }}>
+                <button
+                  className={`contrib${authorFilter === name ? ' sel' : ''}`}
+                  onClick={() => setAuthorFilter(authorFilter === name ? null : name)}
+                  title={authorFilter === name ? 'show everyone' : `show only ${name}`}
+                >
+                  <span className="cdot" style={{ background: authorColors.get(name) ?? '#8896a5' }} />
+                  {name} <b>{n.toLocaleString()}</b>
+                  {(recentByLogin.get(name) ?? 0) > 0 && (
+                    <span className="contrib-recent" title={`${recentByLogin.get(name)} matched in the last 24h`}>
+                      ▲{recentByLogin.get(name)}
+                    </span>
+                  )}
+                </button>
+                {myLogin && name.toLowerCase() === myLogin.toLowerCase() && (
+                  <input
+                    type="color"
+                    className="contrib-color"
+                    value={authorColors.get(name) ?? '#8896a5'}
+                    title="Pick your contributor color - it commits to the repo and shows on everyone's Atlas"
+                    onChange={(e) => pickMyColor(e.target.value)}
+                  />
                 )}
-              </button>
+              </span>
             ))}
+            {colorErr && <span className="hint" style={{ margin: 0, color: '#b91c1c' }}>{colorErr}</span>}
             {authorFilter && (
               <button className="mini-btn" style={{ flex: 'none' }} onClick={() => setAuthorFilter(null)}>clear</button>
             )}

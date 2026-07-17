@@ -49,6 +49,11 @@ const api = {
     return () => ipcRenderer.removeListener('draft:add', l)
   },
   githubCredits: (): Promise<GithubCredits> => ipcRenderer.invoke('github:credits'),
+  // Shared contributor colors (repo-committed login->hex, applied on everyone's Atlas legend/map).
+  contributorColors: (): Promise<{ colors: Record<string, string>; you: string | null }> =>
+    ipcRenderer.invoke('colors:get'),
+  setContributorColor: (color: string): Promise<{ ok: boolean; error?: string; colors?: Record<string, string> }> =>
+    ipcRenderer.invoke('colors:set', color),
 
   pickRepo: (): Promise<RepoState> => ipcRenderer.invoke('repo:pick'),
   setRepo: (path: string): Promise<RepoState> => ipcRenderer.invoke('repo:set', path),

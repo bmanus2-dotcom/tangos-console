@@ -1226,6 +1226,11 @@ html[data-theme='deepsea'] .app-bg-bubble { opacity: 0.5; }
 .linkish:disabled { opacity: 0.5; cursor: default; }
 /* contributors legend: green ▲ + count matched in the last 24h */
 .contrib-recent { margin-left: 4px; font-size: 10px; font-weight: 700; color: #16a34a; letter-spacing: -0.5px; }
+/* Your contributor-color picker: a small swatch next to YOUR legend entry (signed-in login only).
+   The picked color commits to the repo's contributor-colors.json and shows on everyone's Atlas. */
+.contrib-color { width: 20px; height: 20px; padding: 0; border: 1px solid var(--aero-border); border-radius: 6px; background: transparent; cursor: pointer; flex: none; }
+.contrib-color::-webkit-color-swatch-wrapper { padding: 2px; }
+.contrib-color::-webkit-color-swatch { border: none; border-radius: 4px; }
 /* per-AI queue chip in the box header: how much work is lined up, with a clear-queue x */
 .aib-queue {
   display: inline-flex; align-items: center; gap: 4px; flex: none;

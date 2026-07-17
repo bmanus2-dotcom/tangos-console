@@ -14,6 +14,7 @@ import { runTool } from './runTool'
 import { preflight } from './preflight'
 import { readAtlas } from './atlas'
 import { githubCredits } from './github'
+import { fetchColors, setMyColor, viewerLogin } from './contributorColors'
 import { startDeviceFlow, pollForToken } from './githubAuth'
 import { encryptionAvailable, listSecrets, setSecret, deleteSecret, secretsEnv } from './secrets'
 import { aiStats, outputIsMatch, matchDivergence } from './aiStats'
@@ -1303,6 +1304,32 @@ ipcMain.handle('atlas:load', () => {
 
 ipcMain.handle('github:credits', async () => {
   return githubCredits(state.descriptor?.project?.github ?? '', secretsEnv().GITHUB_TOKEN || process.env.GITHUB_TOKEN)
+})
+
+// Shared contributor colors: the repo-committed login->hex map, plus who "you" are (the stored
+// token's login) so the legend knows which entry gets the picker. Colors apply to EVERYONE's Atlas.
+ipcMain.handle('colors:get', async (): Promise<{ colors: Record<string, string>; you: string | null }> => {
+  const repo = state.repoPath
+  const slug = repo && (await isGitRepo(repo)) ? await remoteSlug(repo) : null
+  const branch = slug && repo ? await defaultBranch(repo) : 'main'
+  const token = secretsEnv().GITHUB_TOKEN || process.env.GITHUB_TOKEN
+  const [colors, you] = await Promise.all([fetchColors(slug, branch, repo), viewerLogin(token)])
+  return { colors, you }
+})
+
+// Set YOUR color (signed-in only; the module merges just your login's key into the upstream file
+// and commits it via the Contents API, so nobody can write anyone else's color from the UI).
+ipcMain.handle('colors:set', async (_e, color: string): Promise<{ ok: boolean; error?: string; colors?: Record<string, string> }> => {
+  const repo = state.repoPath
+  if (!repo || !(await isGitRepo(repo))) return { ok: false, error: 'not a git checkout' }
+  const slug = await remoteSlug(repo)
+  if (!slug) return { ok: false, error: 'no GitHub origin remote' }
+  const token = secretsEnv().GITHUB_TOKEN || process.env.GITHUB_TOKEN
+  if (!token) return { ok: false, error: 'sign into GitHub in Settings first' }
+  const branch = await defaultBranch(repo)
+  const r = await setMyColor(slug, branch, token, String(color))
+  if (!r.ok) return { ok: false, error: r.error }
+  return { ok: true, colors: await fetchColors(slug, branch, repo) }
 })
 
 // GitHub device-flow sign-in: return the user code + verification URL to show, open the
