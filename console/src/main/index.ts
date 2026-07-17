@@ -26,7 +26,7 @@ import {
   remoteSlug, defaultBranch, currentBranch,
   pushSubsetToBranch, changedSrcFiles,
   isDirty, aheadBehind, unmergedAhead, fetchRemote, rebasePull, gitUserName,
-  recentlyAddedSrc, fetchBase, upstreamState, newSrcVsBase,
+  recentlyAddedSrc, fetchBase, upstreamState, upstreamIsNonmatching, newSrcVsBase,
   syncPreview, backupBeforeSync, syncToOrigin
 } from './gitsafe'
 import { ensurePullRequest, resolvePushTarget, type PushTarget } from './pullRequests'
@@ -258,8 +258,11 @@ async function runAutoPush(slug: string): Promise<void> {
     let heldStale = 0
     for (const f of files) {
       const up = await upstreamState(state.repoPath, base, f)
-      if (up !== 'absent') {
-        pending.delete(f) // landed (identical) or superseded (differs) - either way, not ours to PR
+      // 'identical' = already landed upstream. 'differs' = upstream has its own version, normally
+      // superseded - EXCEPT when upstream is still NONMATCHING and ours is a verified match: that's
+      // a real upgrade (nonmatching -> byte-exact), so ship it instead of silently dropping the win.
+      if (up === 'identical' || (up === 'differs' && !(await upstreamIsNonmatching(state.repoPath, base, f)))) {
+        pending.delete(f) // landed, or superseded by a real upstream match - not ours to PR
         verifiedContent.delete(f)
         landedUpstream++
         continue
@@ -296,7 +299,9 @@ async function runAutoPush(slug: string): Promise<void> {
     // to "someone on an old Console" at a glance. The commit message is re-stamped on every
     // flush (the branch is a single force-pushed squash), so it always names the build that
     // pushed the current tree - even if the app updates mid-session after the PR opened.
-    const consoleVer = `${app.getVersion()}${app.isPackaged ? '' : '-dev'}`
+    // Plain version only - a source/dev build stamps the same string as the release, so a "-dev"
+    // suffix never shows up in a public PR and reads as "something special".
+    const consoleVer = app.getVersion()
     const pushed = await pushSubsetToBranch(
       state.repoPath,
       branch,
@@ -2392,7 +2397,7 @@ ipcMain.handle('repo:pushWorkPr', async (): Promise<{ ok: boolean; url?: string;
   // contributor without collaborator access still opens a cross-repo PR instead of getting a 403.
   const target = await getPushTarget(gh, token)
   if (!target.ok || !target.slug) return { ok: false, error: target.error ?? 'could not resolve a push target' }
-  const consoleVer = `${app.getVersion()}${app.isPackaged ? '' : '-dev'}`
+  const consoleVer = app.getVersion() // plain version, no "-dev" suffix (see noteMatchAndPush)
   const pushed = await pushSubsetToBranch(
     repo, branch, base, files,
     `tangos: matched work (${branch}) [tangOS Console v${consoleVer}]`,

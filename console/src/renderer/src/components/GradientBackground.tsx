@@ -310,13 +310,18 @@ export default function GradientBackground({ palette }: { palette: string }): JS
     let tGrad = 0
     let tBub = 0
     let last = performance.now()
+    // The blobs drift slowly, so 60fps on a blur-heavy layer is wasted CPU - cap to ~30fps. And skip
+    // the work entirely while the window is hidden/minimized OR just unfocused (alt-tabbed away): the
+    // compositor then keeps the last blurred frame static for free. rAF keeps ticking cheaply so it
+    // resumes the instant the window is looked at again.
+    const FRAME_MS = 1000 / 30
     const frame = (now: number): void => {
       raf = requestAnimationFrame(frame)
-      // Don't touch the DOM while the window is hidden/minimized - saves GPU + battery.
-      if (document.hidden) {
+      if (document.hidden || !document.hasFocus()) {
         last = now
         return
       }
+      if (now - last < FRAME_MS) return
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
       tGrad += dt * gradSpeed

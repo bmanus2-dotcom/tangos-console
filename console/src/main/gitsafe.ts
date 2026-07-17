@@ -363,6 +363,15 @@ export async function upstreamState(repo: string, base: string, path: string): P
   return (await git(repo, ['diff', '--quiet', ref, '--', path])).code === 0 ? 'identical' : 'differs'
 }
 
+/** Does origin/<base>'s version of this file still carry the NONMATCHING marker? When it does, a
+ *  locally verified byte-match is an UPGRADE worth shipping (nonmatching -> byte-exact), not a
+ *  "superseded, drop it" the way a 'differs' against an already-matched upstream would be. */
+export async function upstreamIsNonmatching(repo: string, base: string, path: string): Promise<boolean> {
+  const r = await git(repo, ['show', `origin/${base}:${path}`])
+  if (r.code !== 0) return false
+  return /(^|\n)\s*\/\/\s*NONMATCHING\b/i.test(r.out)
+}
+
 /** src/*.c|.cpp files a diverged local branch introduces vs origin/<base> that AREN'T already
  *  landed upstream - the genuinely-unpublished matches a diverged clone should PR. Diffs the
  *  merge-base..HEAD range (only this branch's own commits) and keeps files upstream lacks

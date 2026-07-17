@@ -8,7 +8,7 @@ export interface UpdateNote {
  *  user opens him and reads it; the id is remembered in settings so each note
  *  only nags once. For the next release: bump the id and rewrite the body. */
 export const UPDATE_NOTE: UpdateNote = {
-  id: 'sync-repo-2026-07',
+  id: 'idle-cpu-2026-07',
   title: 'New update!',
-  body: 'Drifted clone? Settings > Sync repo resets it to a fresh copy (backs up first).'
+  body: 'Uses a lot less CPU when idle.'
 }

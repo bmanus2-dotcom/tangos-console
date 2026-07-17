@@ -108,6 +108,7 @@ export class ChaosEngine {
   private needBake = true
   private bakeCam: BakeCam | null = null
   private rafId: number | null = null
+  private cartTimer: ReturnType<typeof setTimeout> | null = null
   private disposed = false
   private lastBakeMs = 0
   private lastFrameMs = 0
@@ -367,6 +368,8 @@ export class ChaosEngine {
     this.disposed = true
     if (this.rafId != null) cancelAnimationFrame(this.rafId)
     this.rafId = null
+    if (this.cartTimer != null) clearTimeout(this.cartTimer)
+    this.cartTimer = null
   }
 
   private escapeOut(): boolean {
@@ -499,6 +502,16 @@ export class ChaosEngine {
       this.rafId = null
       this.frame()
     })
+  }
+
+  /** Wake at ~20fps instead of every frame - for idle animations (the cart rainbow) that don't need
+   *  60fps while the camera sits still. A real wake() (interaction/flight) takes over instantly. */
+  private wakeThrottled(): void {
+    if (this.disposed || this.rafId != null || this.cartTimer != null) return
+    this.cartTimer = setTimeout(() => {
+      this.cartTimer = null
+      this.wake()
+    }, 48)
   }
 
   /** Jump/scrub the camera to a minimap position (keeps the current zoom). */
@@ -676,15 +689,12 @@ export class ChaosEngine {
     this.lastFrameMs = performance.now() - now
     if (window.chaosPerf) this.drawPerf()
     // keep frames coming only while something is alive; otherwise the loop sleeps
-    if (
-      camMoving ||
-      !settled ||
-      this.bubble.needsFrame(now) ||
-      this.pendingBubble ||
-      this.travelAnim ||
-      this.cartNodes.length // keep the rainbow overlay animating while anything is basketed
-    ) {
+    if (camMoving || !settled || this.bubble.needsFrame(now) || this.pendingBubble || this.travelAnim) {
       this.wake()
+    } else if (this.cartNodes.length) {
+      // Only the rainbow overlay wants frames (camera's settled): it's a slow shimmer, so throttle to
+      // ~20fps instead of pinning a full-speed rAF while nothing else moves.
+      this.wakeThrottled()
     }
   }
 
