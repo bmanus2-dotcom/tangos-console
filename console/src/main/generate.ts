@@ -119,12 +119,21 @@ export function detectRepo(repoPath: string): GenerateReport {
     'log_attempt.py': {
       rel: 'tools/log_attempt.py', id: 'log_attempt', label: 'Log attempt', category: 'logging', readOnly: false,
       description:
-        'Append one attempt-tree node (every try). Status from tools: matched only after verify; near_miss when tip improves; no_progress otherwise. No wall-clock times.'
+        'REQUIRED after every try: append attempt-tree node (model+reasoning+harness for AI). matched only after verify; near_miss when tip improves; else no_progress. No wall-clock times.'
+    },
+    'stamp_provenance.py': {
+      rel: 'tools/stamp_provenance.py',
+      id: 'stamp_provenance',
+      label: 'Stamp provenance',
+      category: 'logging',
+      readOnly: false,
+      description:
+        'After MATCH: stamp final how (AI: model+reasoning+harness) to match_provenance.jsonl. Not a new try. Use this on SM64DS — tools/bank.py there is fan-out only.'
     },
     'bank.py': {
       rel: 'tools/bank.py', id: 'bank', label: 'Bank match', category: 'logging', readOnly: false,
       description:
-        'Bank a verified match + provenance (AI: model/reasoning/harness). Not a new try — do not double-count attempts.'
+        'Repo-dependent: EP stamps provenance; SM64DS fan-out verifies batch JSON. Prefer stamp_provenance when that tool exists. Not a new try.'
     },
     'chaos_db_ci.py': {
       rel: 'tools/chaos_db_ci.py', id: 'chaos_db', label: 'Chaos DB', category: 'reporting', readOnly: true,
