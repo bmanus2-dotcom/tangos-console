@@ -118,11 +118,13 @@ export function detectRepo(repoPath: string): GenerateReport {
     },
     'log_attempt.py': {
       rel: 'tools/log_attempt.py', id: 'log_attempt', label: 'Log attempt', category: 'logging', readOnly: false,
-      description: 'Append one matching attempt (attempt tree node) to config/match_attempts.jsonl.'
+      description:
+        'Append one attempt-tree node (every try). Status from tools: matched only after verify; near_miss when tip improves; no_progress otherwise. No wall-clock times.'
     },
     'bank.py': {
       rel: 'tools/bank.py', id: 'bank', label: 'Bank match', category: 'logging', readOnly: false,
-      description: 'Bank a verified match (provenance required for AI).'
+      description:
+        'Bank a verified match + provenance (AI: model/reasoning/harness). Not a new try — do not double-count attempts.'
     },
     'chaos_db_ci.py': {
       rel: 'tools/chaos_db_ci.py', id: 'chaos_db', label: 'Chaos DB', category: 'reporting', readOnly: true,

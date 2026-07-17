@@ -574,9 +574,25 @@ export default function AtlasView({
                     title={a.attemptId}
                   >
                     <span className={`ad-status st-${a.status}`}>{a.status}</span>
-                    {a.divergences != null && <span className="ad-div">div {a.divergences}</span>}
+                    {a.divergences != null && a.status === 'near_miss' && (
+                      <span className="ad-div">div {a.divergences}</span>
+                    )}
                     {a.improvedNearMiss && <span className="ad-flag">↑</span>}
-                    {a.model && <span className="ad-model mono">{a.model}</span>}
+                    {/* Values only: "Grok 4.5 (high) · grok-build" — no model= keys, no timestamps */}
+                    {(a.model || a.harness || a.reasoning) && (
+                      <span className="ad-model mono">
+                        {[
+                          a.model
+                            ? a.reasoning
+                              ? `${a.model.replace(/-/g, ' ')} (${a.reasoning})`
+                              : a.model.replace(/-/g, ' ')
+                            : null,
+                          a.harness || null
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    )}
                     {(a.usedNearMissDraft || a.usedGhidraDraft) && (
                       <span className="ad-flags">
                         {a.usedNearMissDraft ? 'nm' : ''}

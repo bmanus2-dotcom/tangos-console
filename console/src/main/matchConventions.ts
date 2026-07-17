@@ -120,19 +120,31 @@ export function matchConventionsGuide(desc: TangosDescriptor, opts: MatchGuideOp
     '======================================================================',
     'WHO (credit) → MATCH_RESULT.author (GitHub login). Never put names in matchProvenance.',
     'HOW (method) → matchProvenance only (model / reasoning / harness slugs, or kind=human).',
-    'EVERY TRY   → one MATCH_RESULT node in an attempt tree (including no_progress / failed).',
+    'EVERY TRY   → one MATCH_RESULT node (including no_progress / compile_error / failed).',
     '',
     'Tree shape (functionId is the stable key — never name alone):',
     '  module:0xaddr',
-    '  ├─ near_miss div=40   parent=null',
-    '  │  └─ near_miss div=12 parent=…  improved',
-    '  │     └─ matched      parent=…',
+    '  ├─ near_miss div=40   parent=null          base=scratch',
+    '  │  ├─ no_progress     parent=…            (dead end — tip not beaten)',
+    '  │  └─ near_miss div=12 parent=… improvedNearMiss=true',
+    '  │     └─ matched      parent=…            (only after verify MATCH)',
     '',
     'Identity every node: schemaVersion=1, functionId, unique attemptId (ULID/UUID),',
     'parentAttemptId (null = root), base.kind.',
-    'Privacy: do NOT log loggedAt, ts, or any wall-clock finish time.',
+    'base.kind: scratch | previous_attempt | near_miss_draft | matched_sibling',
+    'Privacy: do NOT log loggedAt, ts, or any wall-clock finish time. Do not embed times in attemptId.',
     'Draft trackers (independent, both may be true): usedNearMissDraft, usedGhidraDraft',
     '(inherit true from parent when that source was used earlier on the lineage).',
+    '',
+    'STATUS (you set from tools — not a free vibe claim):',
+    '  matched       — ONLY when verify (match tool / match.py) reports MATCH. Refuse otherwise.',
+    '  near_miss     — scored draft that is the tip or improves the tip (set divergences).',
+    '  no_progress   — tried; no useful score, OR score did NOT beat prevBestDivergences.',
+    '                  Do NOT log near_miss with the same div as best tip + improvedNearMiss=false.',
+    '  compile_error — did not compile',
+    '  failed        — other failure',
+    '  skipped       — deliberately skipped',
+    'improvedNearMiss = true only when divergences < prevBestDivergences (or set explicitly).',
     '',
     'SHARED DEFAULTS for this batch (copy into every MATCH_RESULT unless a try differs):',
     '```yaml',
@@ -146,16 +158,17 @@ export function matchConventionsGuide(desc: TangosDescriptor, opts: MatchGuideOp
     '```',
     'Slugs only (good: grok-4.5 / grok-build; bad: "Grok 4.5" / "Grok Build").',
     '',
-    'Per target, emit a slim node (fill status / attemptId / parent / base / draft flags);',
-    'paste SHARED DEFAULTS for sessionScope, batchSize, author, matchProvenance.',
+    'Per target, emit a slim node (fill status / attemptId / parent / base / draft flags /',
+    'divergences when near_miss); paste SHARED DEFAULTS for sessionScope, batchSize, author,',
+    'matchProvenance. One human/agent session (one prompt loop) = one attempt row.',
     '',
     `Stores: attempts → ${attempts}; final how on bank → ${provenance}.`,
     hasLogTool
       ? 'Log tries with the log_attempt tool (or tools/log_attempt.py). Prefer --src on near_miss so tip C lands in the near-miss DB (when Near-miss tips are ON).'
       : `Log tries by appending nodes operators ingest into ${attempts} (tools/log_attempt.py when present).`,
     hasBankTool
-      ? 'On MATCH: bank via the bank tool (provenance required for AI: model + reasoning + harness). Bank is NOT a new try.'
-      : 'On MATCH: promote verified C to src/ and stamp provenance when the repo provides a bank path.'
+      ? 'On MATCH: bank via the bank tool (AI needs model + reasoning + harness). Bank is NOT a new try — do not double-log matched unless the function was never logged as matched.'
+      : 'On MATCH: promote verified C to src/ and stamp provenance when the repo provides a bank path. Banking is NOT a second try.'
   ]
   return lines.join('\n')
 }
@@ -164,11 +177,13 @@ export function matchConventionsGuide(desc: TangosDescriptor, opts: MatchGuideOp
 export function matchConventionsConnectBlurb(project?: TangosProject | null): string | null {
   const c = conventionsOf(project)
   if (!c?.attemptTree) return null
-  const g = c.ghidraDrafts ? ' Ghidra scaffolds (ghidra_out/) are allowed as draft hints only.' : ''
+  const g = c.ghidraDrafts ? ' Ghidra scaffolds (ghidra_out/) are draft hints only.' : ''
   return (
-    '  8. This repo uses attempt-tree logging: every try (including failures) is a MATCH_RESULT node ' +
-    '(functionId + attemptId + parentAttemptId + matchProvenance). next_batch will include SHARED DEFAULTS ' +
-    'and the log paths once — do not invent a second logging scheme.' +
+    '  8. This repo uses attempt-tree logging: every try is a MATCH_RESULT node ' +
+    '(functionId + attemptId + parentAttemptId + matchProvenance; NO wall-clock times). ' +
+    'Status from tools: matched only after verify; near_miss only when the tip improves; ' +
+    'no_progress when the tip is not beaten. next_batch includes SHARED DEFAULTS once. ' +
+    'Bank is not a new try.' +
     g
   )
 }
