@@ -350,9 +350,6 @@ export default function AtlasView({
           </div>
         </div>
         <div className="bb-right">
-          <button className="mini-btn" onClick={() => window.tangos.openModulePopout('*')} title="Open the Atlas in its own window">
-            <ExternalLink size={12} style={{ verticalAlign: -2 }} />
-          </button>
           <button
             className="mini-btn"
             onClick={() => setFullAtlas((v) => !v)}

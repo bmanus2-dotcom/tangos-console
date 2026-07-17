@@ -18,12 +18,8 @@ export default function ModulePopout({ module }: { module: string }): JSX.Elemen
     setAdded((s) => new Set(s).add(f.name))
   }
 
-  // "*" = the whole atlas in a window (the bottom-bar popout button), not one module.
-  const whole = module === '*'
-  const title = whole ? 'Atlas' : module
-
   useEffect(() => {
-    document.title = `tangOS · ${title}`
+    document.title = `tangOS · ${module}`
     ;(async () => {
       // reuse the data the main window already loaded (never fetches -> no hang)
       let data: AtlasDb | null = null
@@ -38,7 +34,7 @@ export default function ModulePopout({ module }: { module: string }): JSX.Elemen
 
   const moduleDb = useMemo<AtlasDb | null>(() => {
     if (!db) return null
-    const functions = whole ? db.functions : db.functions.filter((f) => f.module === module)
+    const functions = db.functions.filter((f) => f.module === module)
     const matched = functions.filter((f) => f.matched)
     return {
       generatedAt: db.generatedAt,
@@ -47,11 +43,11 @@ export default function ModulePopout({ module }: { module: string }): JSX.Elemen
         matchedFunctions: matched.length,
         totalBytes: functions.reduce((s, f) => s + f.size, 0),
         matchedBytes: matched.reduce((s, f) => s + f.size, 0),
-        moduleCount: whole ? new Set(functions.map((f) => f.module)).size : 1
+        moduleCount: 1
       },
       functions
     }
-  }, [db, module, whole])
+  }, [db, module])
 
   const funcs = useMemo(() => (moduleDb ? sortFns(moduleDb.functions, sort) : []), [moduleDb, sort])
 
@@ -60,7 +56,7 @@ export default function ModulePopout({ module }: { module: string }): JSX.Elemen
   return (
     <div className="popout">
       <div className="pop-head">
-        <span className="pop-title">{title}</span>
+        <span className="pop-title">{module}</span>
         {s && <span className="hint" style={{ margin: 0 }}>{s.matchedFunctions}/{s.totalFunctions} matched · {s.totalBytes.toLocaleString()} b</span>}
         <div style={{ flex: 1 }} />
         <WindowControls />
