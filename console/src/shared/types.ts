@@ -424,7 +424,6 @@ export interface AttemptNodeSummary {
   status: string
   divergences: number | null
   improvedNearMiss: boolean
-  loggedAt: string | null
   model: string | null
   harness: string | null
   reasoning: string | null

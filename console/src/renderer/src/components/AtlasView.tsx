@@ -577,9 +577,6 @@ export default function AtlasView({
                     {a.divergences != null && <span className="ad-div">div {a.divergences}</span>}
                     {a.improvedNearMiss && <span className="ad-flag">↑</span>}
                     {a.model && <span className="ad-model mono">{a.model}</span>}
-                    {a.loggedAt && (
-                      <span className="ad-time">{a.loggedAt.replace('T', ' ').replace(/:\d{2}Z?$/, '')}</span>
-                    )}
                     {(a.usedNearMissDraft || a.usedGhidraDraft) && (
                       <span className="ad-flags">
                         {a.usedNearMissDraft ? 'nm' : ''}

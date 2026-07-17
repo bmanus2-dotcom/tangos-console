@@ -865,7 +865,6 @@ html[data-theme='deepsea'] .app-bg-bubble { opacity: 0.5; }
 .ad-div { font-weight: 600; color: var(--aero-text); }
 .ad-flag { color: #16a34a; font-weight: 700; }
 .ad-model { opacity: 0.75; font-size: 10.5px; }
-.ad-time { color: var(--aero-muted); font-size: 10.5px; }
 .ad-flags { font-size: 10px; color: var(--aero-muted); font-family: ui-monospace, monospace; }
 .ad-note { flex: 1 1 100%; color: var(--aero-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ad-empty { margin: 2px 0 0; font-size: 12px; }

@@ -15,7 +15,6 @@ export interface AttemptNodeSummary {
   status: string
   divergences: number | null
   improvedNearMiss: boolean
-  loggedAt: string | null
   model: string | null
   harness: string | null
   reasoning: string | null
@@ -122,7 +121,7 @@ function filterAttempts(
   })
 }
 
-/** Depth-first order with depth, roots sorted by time. */
+/** Depth-first order with depth; siblings by attemptId (no wall-clock times). */
 function orderTree(rows: Record<string, unknown>[]): AttemptNodeSummary[] {
   type Node = AttemptNodeSummary & { children: Node[] }
   const byId = new Map<string, Node>()
@@ -139,7 +138,6 @@ function orderTree(rows: Record<string, unknown>[]): AttemptNodeSummary[] {
       status: str(r.status) || 'unknown',
       divergences: num(r.divergences),
       improvedNearMiss: bool(r.improvedNearMiss) === true,
-      loggedAt: str(r.loggedAt) || str(r.ts),
       model: str(r.model) || str((r.matchProvenance as { model?: unknown } | undefined)?.model),
       harness: str(r.harness) || str((r.matchProvenance as { harness?: unknown } | undefined)?.harness),
       reasoning:
@@ -162,11 +160,11 @@ function orderTree(rows: Record<string, unknown>[]): AttemptNodeSummary[] {
     else roots.push(n)
   }
 
-  const byTime = (a: Node, b: Node): number =>
-    (a.loggedAt || '').localeCompare(b.loggedAt || '') || a.attemptId.localeCompare(b.attemptId)
+  // Privacy: no loggedAt/ts — order by attemptId only.
+  const byIdKey = (a: Node, b: Node): number => a.attemptId.localeCompare(b.attemptId)
 
-  roots.sort(byTime)
-  for (const n of list) n.children.sort(byTime)
+  roots.sort(byIdKey)
+  for (const n of list) n.children.sort(byIdKey)
 
   const out: AttemptNodeSummary[] = []
   const walk = (n: Node, depth: number): void => {
