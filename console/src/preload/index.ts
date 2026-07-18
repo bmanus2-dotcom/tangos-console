@@ -37,10 +37,22 @@ const api = {
   recentAdds: (sinceHours?: number): Promise<string[]> => ipcRenderer.invoke('atlas:recentAdds', sinceHours),
   atlasSource: (req: { id: string; srcPath?: string }): Promise<AtlasSource | null> =>
     ipcRenderer.invoke('atlas:source', req),
+  functionHistory: (req: {
+    functionId?: string
+    module: string
+    addr: number
+    name: string
+  }): Promise<import('../shared/types').FunctionHistory | null> =>
+    ipcRenderer.invoke('atlas:functionHistory', req),
   viewerPrefsGet: (): Promise<ViewerPrefs> => ipcRenderer.invoke('viewer:getPrefs'),
   viewerPrefsSet: (p: Partial<ViewerPrefs>): Promise<ViewerPrefs> => ipcRenderer.invoke('viewer:setPrefs', p),
   bgPrefsGet: (): Promise<BackgroundPrefs> => ipcRenderer.invoke('bg:getPrefs'),
   bgPrefsSet: (p: Partial<BackgroundPrefs>): Promise<BackgroundPrefs> => ipcRenderer.invoke('bg:setPrefs', p),
+  matchingPrefsGet: (): Promise<import('../shared/types').MatchingPrefs> =>
+    ipcRenderer.invoke('matching:getPrefs'),
+  matchingPrefsSet: (
+    p: Partial<import('../shared/types').MatchingPrefs>
+  ): Promise<import('../shared/types').MatchingPrefs> => ipcRenderer.invoke('matching:setPrefs', p),
   openModulePopout: (module: string): Promise<void> => ipcRenderer.invoke('atlas:popout', module),
   addDraftItem: (item: BatchItem): Promise<void> => ipcRenderer.invoke('draft:addItem', item),
   onDraftAdd: (cb: (item: BatchItem) => void): (() => void) => {

@@ -43,10 +43,20 @@ export interface TangosApi {
   atlasGenerate(): Promise<AtlasDb | null>
   recentAdds(sinceHours?: number): Promise<string[]>
   atlasSource(req: { id: string; srcPath?: string }): Promise<AtlasSource | null>
+  functionHistory(req: {
+    functionId?: string
+    module: string
+    addr: number
+    name: string
+  }): Promise<import('../../shared/types').FunctionHistory | null>
   viewerPrefsGet(): Promise<ViewerPrefs>
   viewerPrefsSet(p: Partial<ViewerPrefs>): Promise<ViewerPrefs>
   bgPrefsGet(): Promise<BackgroundPrefs>
   bgPrefsSet(p: Partial<BackgroundPrefs>): Promise<BackgroundPrefs>
+  matchingPrefsGet(): Promise<import('../../shared/types').MatchingPrefs>
+  matchingPrefsSet(
+    p: Partial<import('../../shared/types').MatchingPrefs>
+  ): Promise<import('../../shared/types').MatchingPrefs>
   openModulePopout(module: string): Promise<void>
   addDraftItem(item: BatchItem): Promise<void>
   onDraftAdd(cb: (item: BatchItem) => void): () => void
