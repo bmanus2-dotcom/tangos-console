@@ -8,7 +8,7 @@ export interface UpdateNote {
  *  user opens him and reads it; the id is remembered in settings so each note
  *  only nags once. For the next release: bump the id and rewrite the body. */
 export const UPDATE_NOTE: UpdateNote = {
-  id: 'contrib-colors-2026-07',
+  id: 'match-logging-2026-07',
   title: 'New update!',
-  body: 'Signed into GitHub? Pick your contributor color in the Atlas legend - it shows on everyone\'s map.'
+  body: 'The console now logs what model + effort tried each function, so nobody re-grinds the same fails.'
 }

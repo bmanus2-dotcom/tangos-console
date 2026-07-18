@@ -101,20 +101,11 @@ export default function Settings({
         />
         <span>Allow near-miss tips</span>
       </label>
-      <label className="settings-check" style={{ marginTop: 6 }}>
-        <input
-          type="checkbox"
-          checked={matchingPrefs.allowGhidra}
-          onChange={(e) => onMatchingPrefs({ allowGhidra: e.target.checked })}
-        />
-        <span>Allow Ghidra scaffolds</span>
-      </label>
       <Info>
-        Same idea as Chaos Viewer&apos;s draft toggles. These do <b>not</b> paste tip C, disasm, or
-        Ghidra into the agent message — agents call tools / open files when ON. When near-miss is OFF,
-        <code> nearmiss_*</code> tools are hidden on the next MCP session. Restart MCP (or reconnect
-        the agent) after flipping Near-miss so the tool list updates. Ghidra policy applies on the
-        next <code>next_batch</code> immediately.
+        Controls whether agents may lean on the near-miss DB, or work these targets from a clean slate.
+        It does <b>not</b> paste tip C or disasm into the agent message - agents call tools / open files
+        when ON. When near-miss is OFF, <code>nearmiss_*</code> tools are hidden on the next MCP
+        session, so restart MCP (or reconnect the agent) after flipping it for the tool list to update.
       </Info>
 
       <div className="section-title" style={{ marginTop: 14 }}>Theme</div>

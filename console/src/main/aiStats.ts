@@ -101,6 +101,12 @@ class AiStatsStore {
    *  re-hitting the same div (or worse) is not progress and must not inflate the tally. bestDiv is
    *  global per function (across agents + sessions), so the win credits whoever pushed it lower.
    *  Separate from matchAttempts, which recordMatch already bumps for the same run. */
+  /** Best (lowest) divergence seen so far for a function, before this run updates it. Infinity =
+   *  never scored. Lets the console classify a fresh attempt as near_miss (improved) vs no_progress. */
+  bestDivFor(func: string | undefined): number {
+    return func ? this.bestDiv.get(func) ?? Infinity : Infinity
+  }
+
   recordNearMiss(name: string | undefined, func: string | undefined, div: number | null, size?: number): void {
     if (!name || !func || div == null || div < 1 || div >= 999) return
     const prev = this.bestDiv.get(func) ?? Infinity

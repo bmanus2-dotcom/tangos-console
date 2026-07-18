@@ -9,7 +9,9 @@ import { activityBus } from './activityBus'
 import { McpManager, normalizeName } from './mcpServer'
 import {
   defaultMatchingPrefs,
-  matchConventionsConnectBlurb
+  matchConventionsConnectBlurb,
+  attemptTreeEnabled,
+  conventionsOf
 } from './matchConventions'
 import { loadDescriptor, DESCRIPTOR_FILENAME } from './descriptor'
 import { detectRepo, writeDescriptor, looksLikeRepo } from './generate'
@@ -577,11 +579,18 @@ function afterRun(
   const ok = res.status === 'ok' && outputIsMatch(res.output)
   const func = typeof values.func === 'string' ? values.func : undefined
   aiStats.recordMatch(client?.name, ok, parseHexish(values.size), func)
+  const div = ok ? null : matchDivergence(res.output)
+  const prevBest = aiStats.bestDivFor(func) // BEFORE recordNearMiss updates it - drives near_miss vs no_progress
   if (!ok) {
     // A non-match that compiled to a small real byte-diff is a near miss - but counted only when it
     // IMPROVES the function's best divergence so far (the gate lives inside recordNearMiss).
-    aiStats.recordNearMiss(client?.name, func, matchDivergence(res.output), parseHexish(values.size))
+    aiStats.recordNearMiss(client?.name, func, div, parseHexish(values.size))
   }
+  // Attempt-tree logging: the CONSOLE writes the durable log row itself (not the agent), stamping the
+  // authoritative connected identity + effort + observed outcome. This is why the guide no longer
+  // tells agents to call log_attempt - relying on the agent to log every try (especially failures)
+  // was the compliance/accuracy hole. Fire-and-forget; only on repos that opted into attemptTree.
+  if (func) void logAttemptFromRun(func, values, client, ok, div, prevBest)
   // Any match attempt (hit or miss) marks the target WORKED so it leaves the "N in queue" count; a
   // hit additionally marks it done for the % matched bar. A near-miss the agent moves on from still
   // counts as worked - the queue reflects what is left to grind, not just what verified.
@@ -593,6 +602,67 @@ function afterRun(
   // attribute ONLY this matched function's src to the agent and roll it into its branch/PR (debounced
   // so a burst becomes one push). Gate on the specific func so ambient near-miss files aren't swept.
   if (ok && typeof values.func === 'string') void noteMatchAndPush(client?.name, [values.func])
+}
+
+/** Console-side attempt logging: run the repo's log_attempt tool for a match run, stamping the fields
+ *  the console knows AUTHORITATIVELY (connected agent identity, its effort, the observed status +
+ *  divergence) so the attempt tree is complete and trustworthy - no dependence on the agent to
+ *  self-report each try (which it skipped, especially on failures). No-op unless the repo opted into
+ *  attemptTree and ships a log_attempt tool. Best-effort: a failed log never touches matching. */
+function logAttemptFromRun(
+  func: string,
+  values: Record<string, unknown>,
+  client: { name: string; role?: string } | undefined,
+  ok: boolean,
+  div: number | null,
+  prevBest: number
+): void {
+  const repo = state.repoPath
+  const desc = state.descriptor
+  if (!repo || !desc || !attemptTreeEnabled(desc.project)) return
+  const logTool = desc.tools.find((t) => t.id === 'log_attempt' || /log_attempt\.py/.test(t.command || ''))
+  if (!logTool) return
+  const improved = div != null && div >= 1 && div < 999 && div < prevBest
+  const status = ok ? 'matched' : improved ? 'near_miss' : 'no_progress'
+  const name = client?.name
+  // Model = the connected agent's family (grok/claude/…), lowercased to a slug - what the console
+  // actually knows, rather than a version string the agent would have to (and often mis-)report.
+  const model = (name ? normalizeName(name) : 'agent').toLowerCase().replace(/[^a-z0-9.+-]+/g, '-')
+  const reasoning = (name && agentEfforts[name]) || 'off'
+  const harness = conventionsOf(desc.project)?.defaultProvenance?.harness?.trim() || 'tangos-console'
+  const batch = state.batches.find((b) => b.items.some((i) => i.ref === func))
+  const item = batch?.items.find((i) => i.ref === func)
+  const batchSize = batch ? batch.items.length : 1
+  const module = (typeof values.module === 'string' && values.module) || item?.module || 'arm9'
+  const addr =
+    (typeof values.addr === 'string' && values.addr) ||
+    (item?.addr != null ? `0x${item.addr.toString(16).padStart(8, '0')}` : undefined)
+  const logValues: Record<string, unknown> = {
+    func,
+    module,
+    status,
+    kind: 'ai',
+    model,
+    reasoning,
+    harness,
+    author: name ?? 'agent',
+    session_scope: batchSize <= 1 ? 'focused' : 'batch',
+    batch_size: batchSize
+  }
+  if (addr) logValues.addr = addr
+  if (status === 'near_miss' && div != null) logValues.divergences = div
+  if (Number.isFinite(prevBest)) logValues.prev_best = prevBest
+  void runTool({
+    tool: logTool,
+    values: logValues,
+    runtime: currentRuntime(),
+    repoPath: repo,
+    source: 'user',
+    allowMutations: true,
+    extraEnv: secretsEnv()
+  }).catch(() => {
+    /* best-effort */
+  })
 }
 
 // Keep a looping self-serving (MCP) agent's queue topped up to this many batches, so there's always a
