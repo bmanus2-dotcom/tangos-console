@@ -4,6 +4,11 @@
 // `match` tool output ("MATCHING VERSIONS" = a real byte match). Token usage is only
 // known for console-driven API AIs (their driver reports it); external MCP AIs leave it
 // undefined. Stats are lifetime, keyed by AI name, persisted in tangos-settings.json.
+//
+// COUNTS ARE UNIQUE FUNCTIONS, NOT VERIFY CALLS. One function is normally verified several
+// times in a run (the first hit, the mandatory re-run before handoff, a pre-PR re-check), so
+// counting calls reported 21 "matches" for a batch that landed 8 files. matchedFuncs /
+// attemptedFuncs remember which functions were already counted, so a re-verify is free.
 import type { AiStats } from '../shared/types'
 
 // A near miss must be genuinely CLOSE, not just an improvement: it counts only when fewer than this
@@ -31,6 +36,10 @@ interface Persisted {
   tokensIn?: number
   tokensOut?: number
   bySize?: Record<string, { attempts: number; matches: number }>
+  /** Functions already counted in totalMatches / matchAttempts. Presence of attemptedFuncs also
+   *  marks a record as post-dedupe: legacy records lack it and are reset on hydrate. */
+  matchedFuncs?: string[]
+  attemptedFuncs?: string[]
 }
 interface Current {
   task?: string
@@ -70,7 +79,7 @@ class AiStatsStore {
   private rawIn(map: Map<string, Persisted>, name: string): Persisted {
     let s = map.get(name)
     if (!s) {
-      s = { totalMatches: 0, matchAttempts: 0 }
+      s = { totalMatches: 0, matchAttempts: 0, matchedFuncs: [], attemptedFuncs: [] }
       map.set(name, s)
     }
     return s
@@ -83,14 +92,26 @@ class AiStatsStore {
   recordMatch(name: string | undefined, ok: boolean, size?: number, func?: string): void {
     if (!name) return
     for (const s of this.scopes(name)) {
-      s.matchAttempts++
-      if (ok) s.totalMatches++
+      // Count each function once. Without a function name there is nothing to dedupe on, so
+      // fall back to per-call counting rather than silently dropping the run.
+      const attempted = (s.attemptedFuncs ??= [])
+      const matched = (s.matchedFuncs ??= [])
+      const firstAttempt = !func || !attempted.includes(func)
+      const firstMatch = ok && (!func || !matched.includes(func))
+      if (firstAttempt) {
+        s.matchAttempts++
+        if (func) attempted.push(func)
+      }
+      if (firstMatch) {
+        s.totalMatches++
+        if (func) matched.push(func)
+      }
       const b = bucketFor(size)
-      if (b) {
+      if (b && (firstAttempt || firstMatch)) {
         s.bySize ??= {}
         const t = (s.bySize[b] ??= { attempts: 0, matches: 0 })
-        t.attempts++
-        if (ok) t.matches++
+        if (firstAttempt) t.attempts++
+        if (firstMatch) t.matches++
       }
     }
     if (ok && func) this.bestDiv.set(func, 0) // a byte match is divergence 0 - the best possible
@@ -185,8 +206,17 @@ class AiStatsStore {
         merged.set(key, { ...s, bySize: s.bySize ? { ...s.bySize } : undefined })
         continue
       }
-      t.totalMatches += s.totalMatches
-      t.matchAttempts += s.matchAttempts
+      // Union the function sets, not the counters: a function both keys matched is still one
+      // match after folding. Counters are re-derived from the unions so they stay == unique
+      // functions. (Runs recorded without a function name aren't in the sets and are added on.)
+      const mu = new Set([...(t.matchedFuncs ?? []), ...(s.matchedFuncs ?? [])])
+      const au = new Set([...(t.attemptedFuncs ?? []), ...(s.attemptedFuncs ?? [])])
+      const anonMatches = Math.max(0, t.totalMatches - (t.matchedFuncs?.length ?? 0)) + Math.max(0, s.totalMatches - (s.matchedFuncs?.length ?? 0))
+      const anonAttempts = Math.max(0, t.matchAttempts - (t.attemptedFuncs?.length ?? 0)) + Math.max(0, s.matchAttempts - (s.attemptedFuncs?.length ?? 0))
+      t.matchedFuncs = [...mu]
+      t.attemptedFuncs = [...au]
+      t.totalMatches = mu.size + anonMatches
+      t.matchAttempts = au.size + anonAttempts
       if (s.nearMisses) t.nearMisses = (t.nearMisses ?? 0) + s.nearMisses
       const ti = (t.tokensIn ?? 0) + (s.tokensIn ?? 0)
       const to = (t.tokensOut ?? 0) + (s.tokensOut ?? 0)
@@ -210,7 +240,15 @@ class AiStatsStore {
   hydrate(data?: Record<string, Persisted>): void {
     if (!data) return
     for (const [name, s] of Object.entries(data)) {
-      if (s && typeof s.totalMatches === 'number') this.store.set(name, s)
+      if (!s || typeof s.totalMatches !== 'number') continue
+      // Pre-dedupe records counted verify calls and kept no function history, so their tallies
+      // can't be corrected after the fact. Zero them once and start clean; the box itself stays
+      // so the AI doesn't vanish from the roster. Post-dedupe records always carry the arrays.
+      if (!Array.isArray(s.attemptedFuncs)) {
+        this.store.set(name, { totalMatches: 0, matchAttempts: 0, matchedFuncs: [], attemptedFuncs: [] })
+        continue
+      }
+      this.store.set(name, s)
     }
   }
 
