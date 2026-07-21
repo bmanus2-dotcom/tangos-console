@@ -1440,7 +1440,9 @@ const LLM_KEYS: Record<string, string[]> = {
   // 'GPT', not 'ChatGPT': normalizeName folds gpt/codex/chatgpt MCP clients to 'GPT', and a
   // mismatched provider name split one agent into two boxes with divided roles/efforts/stats.
   OPENAI_API_KEY: ['GPT'],
-  NEMOTRON_API_KEY: ['Nemotron']
+  NEMOTRON_API_KEY: ['Nemotron'],
+  // One box that fans a batch out across every free Requesty model and keeps the best per function.
+  REQUESTY_API_KEY: ['Requesty']
 }
 // Providers currently being driven by the console (Phase D populates this).
 const apiDriving = new Set<string>()
@@ -2543,6 +2545,12 @@ async function driveBatch(agentName: string): Promise<void> {
     driverEnv.GLM_API_KEY = env.NEMOTRON_API_KEY || 'lm-studio'
     driverEnv.GLM_BASE_URL = 'http://localhost:1234/v1'
     driverEnv.GLM_DIALECT = 'openai'
+  } else if (agentName === 'Requesty') {
+    // Requesty free-model FAN-OUT: a distinct driver (requesty_fanout.py, selected below) runs
+    // glm_refine once per free model over the same worklist and keeps the best per function. It reads
+    // REQUESTY_API_KEY and sets each model's GLM_* itself, so no GLM_MODEL/BASE_URL is set here.
+    if (!env.REQUESTY_API_KEY) throw new Error('no REQUESTY_API_KEY stored - add it in Settings')
+    driverEnv.REQUESTY_API_KEY = env.REQUESTY_API_KEY
   } else {
     throw new Error(`${agentName} has no console driver yet (idle-only)`)
   }
@@ -2612,12 +2620,17 @@ async function driveBatch(agentName: string): Promise<void> {
   const wl = join(driveDir, `${slug}.worklist.jsonl`)
   const outPath = join(driveDir, `${slug}.results.output`)
   writeFileSync(wl, rows.join('\n'))
+  // Requesty drives the free-model fan-out (glm_refine per model, best-per-function wins); everyone
+  // else drives glm_refine directly. Same {wl}/{out}/{jobs}/{attempts} contract either way.
+  const isFanout = agentName === 'Requesty'
   const tool: TangosTool = {
-    id: 'glm_refine',
+    id: isFanout ? 'requesty_fanout' : 'glm_refine',
     label: `Drive ${agentName}`,
     category: 'matching',
     readOnly: false,
-    command: '{python} tools/glm_refine.py --wl {wl} --out {out} --jobs {jobs} --attempts {attempts}'
+    command: isFanout
+      ? '{python} tools/requesty_fanout.py --wl {wl} --out {out} --jobs {jobs} --attempts {attempts}'
+      : '{python} tools/glm_refine.py --wl {wl} --out {out} --jobs {jobs} --attempts {attempts}'
   }
   // Max match attempts per function: the agent box's override, else the console default (4). glm_refine's
   // own default is higher, but a from-scratch batch rarely improves past a few tries, so 4 caps spend.
@@ -2625,9 +2638,10 @@ async function driveBatch(agentName: string): Promise<void> {
   // GLM's default endpoint is z.ai's Coding Plan, which is ~single-concurrency: parallel workers
   // just 429 each other into a slow retry grind (function 1 lands, the rest hang). Drive it
   // sequentially. Nemotron is one local LM Studio model on one GPU - parallel requests just queue
-  // and multiply latency, so it's serial too. Anthropic (Claude) handles concurrency, so it still
-  // gets parallel under "Use agents".
-  const jobs = agentName === 'GLM' || agentName === 'Nemotron' ? 1 : state.useAgents ? 3 : 1
+  // and multiply latency, so it's serial too. Requesty runs every free model in parallel already, so
+  // its PER-MODEL jobs stays 1 (jobs>1 would multiply concurrent free-tier calls into 429s). Anthropic
+  // (Claude) handles concurrency, so it still gets parallel under "Use agents".
+  const jobs = agentName === 'GLM' || agentName === 'Nemotron' || isFanout ? 1 : state.useAgents ? 3 : 1
   batch.status = 'active'
   apiDriving.add(agentName)
   aiStats.setCurrent(agentName, {
