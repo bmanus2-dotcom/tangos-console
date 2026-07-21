@@ -347,6 +347,35 @@ const sessionNearMissNames = new Set<string>() // every near-miss name this sess
 let nearMissPushBusy = false
 let nearMissPushPending = false
 
+/** name -> best (lowest-divergence) banked draft from nearmiss/db.jsonl, so a draftless target can be
+ *  refined from its existing near-miss instead of re-written from scratch. Read fresh each drive (the
+ *  DB churns); returns empty if no repo/descriptor or the file is absent. */
+function bankedDraftsByName(): Map<string, { src: string; div: number }> {
+  const out = new Map<string, { src: string; div: number }>()
+  if (!state.repoPath || !state.descriptor) return out
+  let text = ''
+  try {
+    text = readFileSync(nearMissWatch.nearMissDbPath(state.repoPath, state.descriptor), 'utf8')
+  } catch {
+    return out
+  }
+  for (const raw of text.split('\n')) {
+    const t = raw.trim()
+    if (!t) continue
+    try {
+      const r = JSON.parse(t) as { name?: string; divergences?: number; c_source?: string }
+      const div = Number(r.divergences ?? Infinity)
+      // Only a compiling draft is a usable starting point; div 999 (or worse) is non-reproducing.
+      if (!r.name || !r.c_source || !(div >= 1 && div < 999)) continue
+      const prev = out.get(r.name)
+      if (!prev || div < prev.div) out.set(r.name, { src: r.c_source, div })
+    } catch {
+      /* skip a corrupt line */
+    }
+  }
+  return out
+}
+
 interface NmEntry { line: string; div: number }
 function parseNmDb(text: string): Map<string, NmEntry> {
   const m = new Map<string, NmEntry>()
@@ -2598,11 +2627,31 @@ async function driveBatch(agentName: string): Promise<void> {
     throw new Error(
       `none of this batch's ${batch.items.length} target(s) could be enriched with context - pick targets with an addr + module the worklist tool knows, or generate the batch with the Recommended button (coddog)`
     )
-  // Ship EVERY enriched row, draft or not. glm_refine handles both: a row with a draft gets the
-  // refine prompt, a fresh one gets the explicit "NO DRAFT YET - write the complete source from
-  // scratch" prompt (the old filter-and-throw here predates that upgrade and blocked hand-picked
-  // targets from being driven at all - a hand-assigned batch should just be attempted, role or not).
-  const rows = enriched
+  // Attach the banked near-miss draft to any target that arrived draftless but already HAS one in
+  // nearmiss/db.jsonl. Only the Refiner schedule (refine_wl) carries drafts; coddog/worklist/random
+  // schedule fresh context without them, so a yellow near-miss (e.g. a div-120 function) used to be
+  // re-written FROM SCRATCH - discarding the divergence the DB already reached, and often landing
+  // worse. Handing over the best banked draft turns those into refine-from-N instead ("no draft on a
+  // div-120 target" bug). glm_refine (and the Requesty fan-out) refine a row that carries a draft.
+  const banked = bankedDraftsByName()
+  let refilled = 0
+  const rows = enriched.map((line) => {
+    try {
+      const r = JSON.parse(line) as { name?: string; draft?: string }
+      if (r.name && !r.draft?.trim()) {
+        const d = banked.get(r.name)
+        if (d) {
+          r.draft = d.src
+          refilled++
+          return JSON.stringify(r)
+        }
+      }
+    } catch {
+      /* leave a malformed line as-is */
+    }
+    return line
+  })
+  if (refilled) console.log(`[driveBatch] ${agentName}: refilled ${refilled} target(s) with their banked near-miss draft (refine, not from-scratch)`)
   const fresh = rows.filter((line) => {
     try {
       return !(JSON.parse(line) as { draft?: string }).draft?.trim()
