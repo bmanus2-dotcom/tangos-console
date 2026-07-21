@@ -1444,6 +1444,11 @@ const LLM_KEYS: Record<string, string[]> = {
 }
 // Providers currently being driven by the console (Phase D populates this).
 const apiDriving = new Set<string>()
+// Stop was pressed while this agent was mid-drive: the driver is killed but its post-run pipeline
+// (crackloop land -> paramclone/clone post-pass -> near-miss push) is still finishing. The box shows
+// "Stopping…" and stays un-stoppable until that work completes, so a Stop doesn't visually "finish"
+// before the drafts are banked and PR'd.
+const stopping = new Set<string>()
 
 /** The controller roster: one AiAgent per name, merging live MCP sessions, keyed API
  *  providers, and previously-seen names (whose boxes persist grayed-out). */
@@ -1467,6 +1472,7 @@ function agentsSnapshot(): AiAgent[] {
       roles: list.find((c) => c.roles.length)?.roles ?? agentRoles[name] ?? [],
       effort: agentEfforts[name],
       attempts: agentAttempts[name],
+      stopping: stopping.has(name),
       connected: true,
       sessions: list.length,
       currentBatchId: aiStats.currentBatchId(name),
@@ -1492,6 +1498,7 @@ function agentsSnapshot(): AiAgent[] {
       roles: agentRoles[provider] ?? [],
       effort: agentEfforts[provider],
       attempts: agentAttempts[provider],
+      stopping: stopping.has(provider),
       connected: apiDriving.has(provider),
       currentBatchId: aiStats.currentBatchId(provider),
       stats: aiStats.statsFor(provider),
@@ -1510,6 +1517,7 @@ function agentsSnapshot(): AiAgent[] {
       roles: agentRoles[name] ?? [],
       effort: agentEfforts[name],
       attempts: agentAttempts[name],
+      stopping: stopping.has(name),
       connected: false,
       lastSeen: active.get(name),
       stats: aiStats.statsFor(name),
@@ -1527,6 +1535,7 @@ function agentsSnapshot(): AiAgent[] {
       roles: agentRoles[name] ?? [],
       effort: agentEfforts[name],
       attempts: agentAttempts[name],
+      stopping: stopping.has(name),
       connected: false,
       lastSeen: ts,
       stats: aiStats.statsFor(name),
@@ -2383,6 +2392,12 @@ ipcMain.handle('ai:assign', async (_e, p: { agent: string; role?: string; count:
 ipcMain.handle('ai:stop', (_e, agentName: string) => {
   agentLoop.delete(agentName) // stop any continuous loop from re-assigning
   driveStopRequested.add(agentName) // end the queue walk after the current batch is killed below
+  // If the driver is mid-run, killing it still leaves the post-run pipeline (land/paramclone/push) to
+  // finish. Flag "stopping" so the box shows that and can't be re-clicked until it's actually banked.
+  if (apiDriving.has(agentName)) {
+    stopping.add(agentName)
+    pushState()
+  }
   driveKills.get(agentName)?.() // kill an in-flight driver early; matches found so far are kept
   // Drop the pre-generated spare(s) too: the loop queue keeps LOOP_QUEUE_DEPTH batches buffered, and
   // without this an MCP agent pulls and works one MORE full batch after Stop - contradicting the
@@ -2777,13 +2792,16 @@ async function driveBatch(agentName: string): Promise<void> {
       await noteMatchAndPush(agentName, landed) // ONLY this driver's landed matches - not ambient near-misses
       // Near-misses crackloop land just ingested into nearmiss/db.jsonl: propose them as their own
       // rolling PR so a match-less run's drafts still reach the repo (not just the local tree).
+      // Awaited (not fire-and-forget) so a Stop mid-drive keeps the box in "Stopping…" until the
+      // near-miss PR is actually pushed, per the "don't finish until the PR is up" contract.
       for (const n of nearMissNames) sessionNearMissNames.add(n)
-      if (nearMissNames.length) void pushNearMisses()
+      if (nearMissNames.length) await pushNearMisses()
       scheduleAtlasRegen() // matches are now in src/ - refresh chaos-db so Atlas + near-miss pool track them
     }
   } finally {
     apiDriving.delete(agentName)
     driveKills.delete(agentName)
+    stopping.delete(agentName) // post-run pipeline (incl. the awaited near-miss push) is done now
     aiStats.clearCurrent(agentName)
     batch.status = 'done'
     // Leave wl + outPath on disk so the run's "open folder" link stays useful after it ends;

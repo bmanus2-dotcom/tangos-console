@@ -356,15 +356,18 @@ export default function Controller({
                     // Working (driving or looping): collapse to a single Stop - the role/effort/size/
                     // loop/start controls only add clutter and jump the box height while it runs.
                     <button
-                      className="mini-btn stop aib-stop"
+                      className={`mini-btn stop aib-stop${a.stopping ? ' stopping' : ''}`}
+                      disabled={a.stopping}
                       onClick={() => window.tangos.stopAi(a.name)}
                       title={
-                        driving
-                          ? 'Stop - finishes nothing further; matches found so far are kept'
-                          : "Stop looping - no new batch is queued once the current one finishes; the agent isn't signalled or interrupted"
+                        a.stopping
+                          ? 'Stopping - banking matches, running the clone/paramclone post-pass, and pushing the near-miss PR. Finishes on its own.'
+                          : driving
+                            ? 'Stop - finishes nothing further; matches found so far are kept'
+                            : "Stop looping - no new batch is queued once the current one finishes; the agent isn't signalled or interrupted"
                       }
                     >
-                      <Square size={12} /> Stop
+                      <Square size={12} /> {a.stopping ? 'Stopping…' : 'Stop'}
                     </button>
                   ) : (
                     <>
