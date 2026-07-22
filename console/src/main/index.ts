@@ -2594,6 +2594,15 @@ async function driveBatch(agentName: string): Promise<void> {
     driverEnv.GLM_BASE_URL = 'https://api.moonshot.ai/v1'
     driverEnv.GLM_DIALECT = 'openai'
     driverEnv.GLM_MODEL = 'kimi-k3'
+  } else if (agentName === 'GPT') {
+    // OpenAI - GPT-5.6 Luna on the native /v1/chat/completions dialect. Unlike the other OpenAI-dialect
+    // boxes the effort is NOT forced off: the driver maps it to `reasoning_effort` (minimal|low|medium|
+    // high, per efforts.ts) for gpt-5/o-series models, so the box's dropdown actually takes effect.
+    if (!env.OPENAI_API_KEY) throw new Error('no OPENAI_API_KEY stored - add it in Settings')
+    driverEnv.GLM_API_KEY = env.OPENAI_API_KEY
+    driverEnv.GLM_BASE_URL = 'https://api.openai.com/v1'
+    driverEnv.GLM_DIALECT = 'openai'
+    driverEnv.GLM_MODEL = 'gpt-5.6-luna'
   } else {
     throw new Error(`${agentName} has no console driver yet (idle-only)`)
   }
